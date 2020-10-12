@@ -8,17 +8,6 @@
 #include <netinet/in.h>
 #include <time.h>
 
-/* Structure for IP address */
-struct ipaddr {
-	uint64_t addr[2];
-};
-
-/* Structure for grep pattern */
-struct gpattern {
-	struct ipaddr ip1, ip2;
-	char type;
-};
-
 /* Print help */
 void help(int r){
 	printf("\nIPPRUNNER v0.1-20200930\n\n");
@@ -64,12 +53,6 @@ void help(int r){
 	printf("Report bugs to: markus.thilo@gmail.com\n\n");
 	printf("Project page: https://github.com/markusthilo/iprunner\n\n");
 	exit(r);
-}
-
-/* Read error */
-void readerror() {
-	fprintf(stderr, "Error while reading from pcap file.\n");
-	exit(1);
 }
 
 /* Write error */
@@ -124,6 +107,11 @@ uint64_t readuint64(uint8_t *a, int pos) {
 		| ( (uint64_t) a[pos+7] ) );
 }
 
+/* Structure for IP address */
+struct ipaddr {
+	uint64_t addr[2];
+};
+
 /* Read IPv4 address from array and parse to v6 */
 struct ipaddr readipv4(uint8_t *a, int pos) {
 	struct ipaddr ip = {0, 0};
@@ -141,7 +129,7 @@ struct ipaddr readipv6(uint8_t *a, int pos) {
 
 /* Give IP address version - 4 or 6 */
 int ipversion(struct ipaddr ip) {
-	if (( ip.addr[0] == 0 ) && ( ip.addr[1] & 0xffffffff00000000 == 0xffff00000000 )) return 4;
+	if (( ip.addr[0] == 0 ) && ( ( ip.addr[1] & 0xffffffff00000000 ) == 0xffff00000000 )) return 4;
 	return 6;
 }
 
@@ -247,6 +235,12 @@ struct ipaddr str2ip(char *string, int *s_pos) {
 	return ip;
 }
 
+/* Structure for grep pattern */
+struct gpattern {
+	struct ipaddr ip1, ip2;
+	char type;
+};
+
 /* Get grep pattern */
 struct gpattern getgrep(char *string) {
 	struct gpattern gp;	// to return
@@ -274,7 +268,7 @@ char *sprintaddr(char *dst_str, struct ipaddr ip) {
 			ip.addr[1] & 0xff
 		);
 	else {	/* ip v6 */
-		sprintf(dst_str, "[%lx:%lx:%lx:%4lx:%lx:%lx:%lx:%lx]",
+		sprintf(dst_str, "%lx:%lx:%lx:%lx:%lx:%lx:%lx:%lx",
 			( ip.addr[0] >> 48 ) & 0xffff,
 			( ip.addr[0] >> 32 ) & 0xffff,
 			( ip.addr[0] >> 16 ) & 0xffff,
@@ -314,10 +308,13 @@ char *sprintcnt(char *dst_str, uint64_t cnt, char format) {
 			1000000,
 			1000};
 		uint64_t tmp_int;
-		char tmp_str[16];
+		char tmp_str[8];
 		int zeros = 0;
 		for (int i=0; i<6; i++) {
 			tmp_int = cnt / pt[i];
+			
+						printf("!!!!!! >%s<, %lu\n", dst_str, cnt);
+			
 			if ( tmp_int > 0 ) {
 				if (zeros == 1) sprintf(tmp_str, "%03u ", (unsigned int) tmp_int);
 				else sprintf(tmp_str, "%u ", (unsigned int) tmp_int);
@@ -379,7 +376,7 @@ char *appendaddr(char *dst_str, struct ipaddr addr) {
 char *appendport(char *dst_str, uint16_t port, char set_type) {
 	if ( set_type != 'b' ) { 
 		char port_str[8];
-		sprintf(port_str, ":%d", port);
+		sprintf(port_str, "\t%d", port);
 		strcat(dst_str, port_str);
 	}
 	return dst_str;
@@ -387,7 +384,7 @@ char *appendport(char *dst_str, uint16_t port, char set_type) {
 
 /* Append time stamp to string */
 char *appendts(char *dst_str, uint64_t ts, char format) {
-	char ts_str[24];
+	char ts_str[32];
 	sprintts(ts_str, ts, format); 
 	strcat(dst_str, "\t");
 	strcat(dst_str, ts_str);
@@ -440,6 +437,7 @@ char *sprintset(char *dst_str, struct statset set, char set_type, char format) {
 	appendts(dst_str, set.first_seen, format);
 	appendts(dst_str, set.last_seen, format);
 	appendcnt(dst_str, set.cnt_tcp, format);
+					printf("%s\n", dst_str);
 	appendcnt(dst_str, set.cnt_udp, format);
 	appendcnt(dst_str, set.cnt_other, format);
 	appendcnt(dst_str, set.cnt_all, format);
@@ -448,6 +446,7 @@ char *sprintset(char *dst_str, struct statset set, char set_type, char format) {
 	appendsum(dst_str, set.sum_other, format);
 	appendsum(dst_str, set.sum_all, format);
 	strcat(dst_str, "\n");
+
 	return dst_str;
 }
 
@@ -462,15 +461,16 @@ struct pcapheader readpcapheader(FILE *fd) {
 	struct pcapheader header;
 	uint8_t b[24];
 	header.error = -1;	// go to next pcap file
-	if (fread(&b, 24, 1, fd) != 1) return header;
+	if ( fread(&b, 24, 1, fd) != 1 ) return header;
 	header.magic_number = readuint32(b, 0);
-	header.network = readuint32(b, 20);
-	printf("%x", header.network);
 	if ( header.magic_number != 0xa1b2c3d4 && header.magic_number != 0xd4c3b2a1 ) {	// check for pcap file type
 		header.error = 2;
 		return header;
 	}
-	if ( header.network != 0 ) {	// check for pcap file type
+	if ( header.magic_number == 0xa1b2c3d4 ) header.network = readuint32(b, 20);
+	else header.network = readuint32swapped(b, 20);
+
+	if ( header.network > 1 ) {	// check for pcap file type
 		header.error = 3;
 		return header;
 	}
@@ -597,163 +597,128 @@ struct packetdata readpacket(FILE *fd, struct pcapheader pcap) {
 	return packet;	// all done in the packet
 }
 
-/* Create data set and append to array */
-uint64_t appendset(struct statset *stats, uint64_t stats_cnt, struct packetdata packet) {
-//	printf("realloc\n");
-//	stats = realloc(stats, ((stats_cnt+2) * sizeof(struct statset))); /* get more memory */
+/* Structure for array to store statistics */
+struct sarray {
+	struct statset *array;
+	uint64_t cnt, size, blk;
+};
 
-	stats[stats_cnt].src_addr = packet.src_addr;	// store the data from PCAP file in the dynamic array
-	stats[stats_cnt].dst_addr = packet.dst_addr;
-	stats[stats_cnt].src_port = packet.src_port;
-	stats[stats_cnt].dst_port = packet.dst_port;
-	stats[stats_cnt].first_seen = packet.ts;
-	stats[stats_cnt].last_seen = packet.ts;
-	if ( packet.protocol == 't' ) {	// TCP
-		stats[stats_cnt].sum_tcp = packet.orig_len;	// set traffic volume
-		stats[stats_cnt].cnt_tcp = 1;	// set packet counter
-		stats[stats_cnt].sum_udp = 0;
-		stats[stats_cnt].cnt_udp = 0;
-		stats[stats_cnt].sum_other = 0;
-		stats[stats_cnt].cnt_other = 0;
-	} else if ( packet.protocol == 'u' ) {	// UDP
-		stats[stats_cnt].sum_tcp = 0;
-		stats[stats_cnt].cnt_tcp = 0;
-		stats[stats_cnt].sum_udp = packet.orig_len;	// set traffic volume
-		stats[stats_cnt].cnt_udp = 1;	// set packet counter
-		stats[stats_cnt].sum_other = 0;
-		stats[stats_cnt].cnt_other = 0;
-	} else {	// other IP packet
-		stats[stats_cnt].sum_tcp = 0;
-		stats[stats_cnt].cnt_tcp = 0;
-		stats[stats_cnt].sum_udp = 0;
-		stats[stats_cnt].cnt_udp = 0;
-		stats[stats_cnt].sum_other = packet.orig_len;	// set traffic volume
-		stats[stats_cnt].cnt_other = 1;	// set packet counter
+/* Create data set and append to array */
+void appendset(struct sarray *stats, struct packetdata packet) {
+	if ( stats->cnt == stats->size) {
+		stats->size *= stats->blk;
+		stats->array = realloc(stats->array, stats->size * sizeof(struct statset));	/* get more memory */
+		if ( stats->array == NULL ) memerror();	// just in case...
 	}
-		printf("%ld\n", stats_cnt);
-	//	char o[256];
-		//sprintset(o, stats[stats_cnt], 'b','n');
-		//printf("%s", o);
-	
-	return stats_cnt+1;	// return updatet counter
+	stats->array[stats->cnt].src_addr = packet.src_addr;	// store the data from PCAP file in the dynamic array
+	stats->array[stats->cnt].dst_addr = packet.dst_addr;
+	stats->array[stats->cnt].src_port = packet.src_port;
+	stats->array[stats->cnt].dst_port = packet.dst_port;
+	stats->array[stats->cnt].first_seen = packet.ts;
+	stats->array[stats->cnt].last_seen = packet.ts;
+	switch (packet.protocol) {
+		case 't':	// TCP
+			stats->array[stats->cnt].sum_tcp = packet.orig_len;	// set traffic volume
+			stats->array[stats->cnt].cnt_tcp = 1;	// set packet counter
+			stats->array[stats->cnt].sum_udp = 0;
+			stats->array[stats->cnt].cnt_udp = 0;
+			stats->array[stats->cnt].sum_other = 0;
+			stats->array[stats->cnt].cnt_other = 0;
+			break;
+		case 'u':	// UDP
+			stats->array[stats->cnt].sum_tcp = 0;
+			stats->array[stats->cnt].cnt_tcp = 0;
+			stats->array[stats->cnt].sum_udp = packet.orig_len;	// set traffic volume
+			stats->array[stats->cnt].cnt_udp = 1;	// set packet counter
+			stats->array[stats->cnt].sum_other = 0;
+			stats->array[stats->cnt].cnt_other = 0;
+			break;
+		default:	// other IP packet
+			stats->array[stats->cnt].sum_tcp = 0;
+			stats->array[stats->cnt].cnt_tcp = 0;
+			stats->array[stats->cnt].sum_udp = 0;
+			stats->array[stats->cnt].cnt_udp = 0;
+			stats->array[stats->cnt].sum_other = packet.orig_len;	// set traffic volume
+			stats->array[stats->cnt].cnt_other = 1;	// set packet counter
+	}
+	stats->cnt += 1;	// updatet counter
 }
 
 /* Update timestamps, packet counters and volume */
-struct statset updatetscntsum(struct statset set, struct packetdata packet) {
-	if ( packet.ts > set.last_seen ) set.last_seen = packet.ts;	// update timestamps
-	else if ( packet.ts < set.first_seen ) set.first_seen = packet.ts;
-	if ( packet.protocol == 't' ) {	// TCP
-		set.sum_tcp += packet.orig_len;	// update sum of traffic volume
-		set.cnt_tcp++;	// increase packet counter
-	} else if ( packet.protocol == 'u' ) {	// UDP
-		set.sum_udp += packet.orig_len;	// update sum of traffic volume
-		set.cnt_udp++;	// increase packet counter
-	} else if ( packet.protocol == 'o' ) {	// other ip protocol
-		set.sum_other += packet.orig_len;	// update sum of traffic volume
-		set.cnt_other++;	// increase packet counter
+void updatetscntsum(struct statset *set, struct packetdata packet) {
+	if ( packet.ts > set->last_seen ) set->last_seen = packet.ts;	// update timestamps
+	else if ( packet.ts < set->first_seen ) set->first_seen = packet.ts;
+	switch (packet.protocol) {
+		case 't':	// TCP
+			set->sum_tcp += packet.orig_len;	// update sum of traffic volume
+			set->cnt_tcp++;	// increase packet counter
+			break;
+		case 'u':	// UDP
+			set->sum_udp += packet.orig_len;	// update sum of traffic volume
+			set->cnt_udp++;	// increase packet counter
+			break;
+		case 'o':	// other ip protocol
+			set->sum_other += packet.orig_len;	// update sum of traffic volume
+			set->cnt_other++;	// increase packet counter
 	}
-	return set;
 }
 
 /* Update array with basic address to address statistics, port is ignored */
-uint64_t updatebasic(struct statset *stats, uint64_t stats_cnt, struct packetdata packet) {
-	for (uint64_t i=0; i<stats_cnt; i++) {	// loop through the stored data
-		if ( ( eqaddr(packet.src_addr, stats[i].src_addr) == 1 )	// if identical addresses
-			&& ( eqaddr(packet.dst_addr, stats[i].dst_addr) == 1 ) ) {
-			stats[i] = updatetscntsum(stats[i], packet);
-			return stats_cnt;
+void updatebasic(struct sarray *stats, struct packetdata packet) {
+	for (uint64_t i=0; i<stats->cnt; i++) {	// loop through the array
+		if ( ( eqaddr(packet.src_addr, stats->array[i].src_addr) == 1 )	// if identical addresses
+			&& ( eqaddr(packet.dst_addr, stats->array[i].dst_addr) == 1 ) ) {
+			updatetscntsum(&stats->array[i], packet);
+			return;
 		}
 	}
-	return appendset(stats, stats_cnt, packet);
+	appendset(stats, packet);	// no match -> append new data set to array
 }
 
 /* Update array, check address and port */
-uint64_t updateaddrport(struct statset *stats, uint64_t stats_cnt, struct packetdata packet) {
-	for (uint64_t i=0; i<stats_cnt; i++) {	// loop through the stored data
-		if ( ( eqaddr(packet.src_addr, stats[i].src_addr) == 1 )	// if identical addresses
-			&& ( eqaddr(packet.dst_addr, stats[i].dst_addr) == 1 )
-			&& ( packet.src_port == stats[i].src_port )	// and identical ports
-			&& ( packet.dst_port == stats[i].dst_port ) ) {
-			stats[i] = updatetscntsum(stats[i], packet);
-			return stats_cnt;
+void updateaddrport(struct sarray *stats, struct packetdata packet) {
+	for (uint64_t i=0; i<stats->cnt; i++) {	// loop through the stored data
+		if ( ( eqaddr(packet.src_addr, stats->array[i].src_addr) == 1 )	// if identical addresses
+			&& ( eqaddr(packet.dst_addr, stats->array[i].dst_addr) == 1 )
+			&& ( packet.src_port == stats->array[i].src_port )	// and identical ports
+			&& ( packet.dst_port == stats->array[i].dst_port ) ) {
+				updatetscntsum(&stats->array[i], packet);
+				return;
 		}
 	}
-	return appendset(stats, stats_cnt, packet);
+	appendset(stats, packet);	// no match -> append new data set to array
 }
 
 /* Update array for target address option */
-uint64_t updatetarget(struct statset *stats, uint64_t stats_cnt, struct packetdata packet,
-	struct ipaddr target) {
+void updatetarget(struct sarray *stats, struct packetdata packet, struct ipaddr target) {
 	if ( eqaddr(packet.src_addr, target) == 1 || eqaddr(packet.dst_addr, target) == 1 )	// if src or dst is target
-			return updateaddrport(stats, stats_cnt, packet);
-	return stats_cnt;
+		updateaddrport(stats, packet);
 }
 
 /* Update array for link address option */
-uint64_t updatelink(struct statset *stats, uint64_t stats_cnt, struct packetdata packet,
-	struct ipaddr target1, struct ipaddr target2) {
+void updatelink(struct sarray *stats, struct packetdata packet, struct ipaddr target1, struct ipaddr target2) {
 	if ( ( eqaddr(packet.src_addr, target1) == 1
 			&& eqaddr(packet.dst_addr, target2) == 1 )	// if src is target1 and dst is target2
 		|| ( eqaddr(packet.src_addr, target2) == 1
 			&& eqaddr(packet.dst_addr, target1) == 1 ) )	// or src ist target2 and dst is target1
-			return updateaddrport(stats, stats_cnt, packet);
-	return stats_cnt;
-}
-
-/* Work on one PCAP file to get basic statistics */
-uint64_t workbasicpcap(FILE *fd, struct pcapheader pcap, struct statset *stats, uint64_t stats_cnt) {
-	struct packetdata packet;
-	do {	// loop through packets (endless until skipping by return)
-		packet = readpacket(fd, pcap);
-		if ( packet.error > 0 ) break;	// end of file might be reached
-		if ( packet.error == 1 ) readerror();
-		if ( packet.ipv == 0 ) continue;	// do not count and go to next packet - no ip packet
-		stats_cnt = updatebasic(stats, stats_cnt, packet);
-	} while (  packet.error == 0 );	// until end of pcap file
-	return stats_cnt;
-}
-
-/* Work on one PCAP file to get statistics for target address */
-uint64_t worktargetpcap(FILE *fd, struct pcapheader pcap, struct statset *stats, uint64_t stats_cnt,
-	struct ipaddr target) {
-	struct packetdata packet;
-	while (1) {	// loop through packets (endless until skipping by return)
-		packet = readpacket(fd, pcap);	/* read packet header*/
-
-		stats_cnt = updatetarget(stats, stats_cnt, packet, target);
-
-	}
-	return stats_cnt;
-}
-
-/* Work on one PCAP file to get statistics for traffic inbetween 2 addresses */
-uint64_t worklinkpcap(FILE *fd, struct pcapheader pcap, struct statset *stats, uint64_t stats_cnt,
-	struct ipaddr target1, struct ipaddr target2) {
-	struct packetdata packet;
-	while (1) {	// loop through packets (endless until skipping by return)
-		packet = readpacket(fd, pcap);	/* read packet header*/
-
-		stats_cnt = updatelink(stats, stats_cnt, packet, target1, target2);
-
-	}
-	return stats_cnt;
+			updateaddrport(stats, packet);
 }
 
 /* Create cnt_all and sum_all, then sort sets by sum_all */
-void sortstats(struct statset *stats, uint64_t stats_cnt) {
+void sortstats(struct sarray *stats) {
 	struct statset tmp;
 	uint64_t swapped;
-	for (uint64_t i=0; i<stats_cnt; i++) {	// loop through sets to sum traffic
-		stats[i].cnt_all = stats[i].cnt_tcp + stats[i].cnt_udp + stats[i].cnt_other;
-		stats[i].sum_all = stats[i].sum_tcp + stats[i].sum_udp + stats[i].sum_other;
+	for (uint64_t i=0; i<stats->cnt; i++) {	// loop through sets to sum traffic
+		stats->array[i].cnt_all = stats->array[i].cnt_tcp + stats->array[i].cnt_udp + stats->array[i].cnt_other;
+		stats->array[i].sum_all = stats->array[i].sum_tcp + stats->array[i].sum_udp + stats->array[i].sum_other;
 	}
 	do {	// bubblesort
 		swapped = 0;
-		for (uint64_t i=1; i<stats_cnt; i++) {
-			if ( stats[i-1].sum_all < stats[i].sum_all ) {
-				tmp = stats[i-1];
-				stats[i-1] = stats[i];
-				stats[i] = tmp;
+		for (uint64_t i=1; i<stats->cnt; i++) {
+			if ( stats->array[i-1].sum_all < stats->array[i].sum_all ) {
+				tmp = stats->array[i-1];
+				stats->array[i-1] = stats->array[i];
+				stats->array[i] = tmp;
 				swapped++;
 			}
 		}
@@ -788,7 +753,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 	struct gpattern grep;
-	grep.type = 'n';
+	grep.type = 'b';
 	if ( gvalue != NULL ) grep = getgrep(gvalue);	// option -g = grep
 	FILE *wfd = NULL;
 	if ( wvalue != NULL ) {	// option -w
@@ -803,14 +768,25 @@ int main(int argc, char **argv) {
 		}
 	}
 	
-//	struct statset *stats = calloc(100, sizeof(struct statset));	// allocate ram for the arrays to store data
-	struct statset stats[500];
+	/* DEBUG */
+	printf("readable_format: >%c<, col_head_line: >%c<\n", readable_format, col_head_line);
+	printf("grep: ip1 = %016lx %016lx, ip2 =  %016lx %016lx, type = >%c<\n", grep.ip1.addr[0], grep.ip1.addr[1], grep.ip2.addr[0], grep.ip2.addr[1], grep.type);
+	char outline[256] = "T E S T\n";
+	/*********/
+	
+	struct sarray stats;
+	stats.blk =  100;
+	stats.cnt = 0;
+	stats.size = stats.blk;
 
-	if ( stats == NULL ) memerror();	// just in case...
-	uint64_t stats_cnt = 0;
+	stats.array = malloc(sizeof(struct statset)*stats.blk);	// allocate ram for the arrays to store data
+	if ( stats.array == NULL ) memerror();	// just in case...
+
 	struct pcapheader pcap;
 	FILE *fd = NULL;	// pcap file pointer
 	uint8_t filetype[8];	// to get file type / magic number
+	struct packetdata packet;	// packet from pcap file
+	int readerror;	// to get read error
 	for (int i = optind; i < argc; i++) {	// go throught the input pcap files
 		fd = fopen(argv[i], "rb");	// open input pcap file
 		if ( fd == NULL ) {
@@ -823,39 +799,45 @@ int main(int argc, char **argv) {
 			case 2 : fprintf(stderr, "Error: wrong file type: %s.\n", argv[i]); exit(1);
 			case 3 : fprintf(stderr, "Error: wrong link-layer: %s\n", argv[i]); exit(1);
 		}
-		/* DEBUG */
-		printf("grep: ip1 = %016lx %016lx, ip2 =  %016lx %016lx, type = >%c<\n", grep.ip1.addr[0], grep.ip1.addr[1], grep.ip2.addr[0], grep.ip2.addr[1], grep.type);
-		/*********/
-		switch (grep.type) {	// calculation depends on grep method (or none)
-			case 't': stats_cnt = worktargetpcap(fd, pcap, stats, stats_cnt, grep.ip1); break;
-			case 'l': stats_cnt = worklinkpcap(fd, pcap, stats, stats_cnt, grep.ip1, grep.ip2); break;
-			default: stats_cnt = workbasicpcap(fd, pcap, stats, stats_cnt);
-		}
+		do {	// loop through packets (endless until skipping by return)
+			packet = readpacket(fd, pcap);
+			if ( packet.error > 0 ) break;	// end of file might be reached
+			if ( packet.error == 1 ) {
+				fprintf(stderr, "Error while reading from file %s.\n", argv[i]);
+				exit(1);
+			}
+			if ( packet.ipv == 0 ) continue;	// do not count and go to next packet - no ip packet
+			switch (grep.type) {	// calculation depends on grep method (or none)
+				case 't': updatetarget(&stats, packet, grep.ip1); break;
+				case 'l': updatelink(&stats, packet, grep.ip1, grep.ip2); break;
+				default: updatebasic(&stats, packet);
+			}
+
+			sprintset(outline, stats.array[stats.cnt-1], grep.type, readable_format);
+
+//			printf("%d: %x / %d\n", stats.cnt, stats.array[1602487635stats.cnt].src_addr.addr[1], stats.array[stats.cnt].cnt_tcp);
+//			printf("%s", outline);
+		} while ( packet.error == 0 );	// until end of pcap file
 		fclose(fd);	// close pcap file
 	}
-	if ( stats_cnt > 0 ) {	// without ip traffic nothing is to generate
-//		sortstats(stats, stats_cnt);
+	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
+//		sortstats(stats, stats.cnt);
 		/* DEBUG */
 		
-		
-		printf("EOF: stats_cnt = %lu\n", stats_cnt);
-		char o[256];
-		sprintset(o, stats[0], 'b','n');
-		printf("%s", o);
-
+		printf("EOF: stats.cnt = %lu\n", stats.cnt);
 		
 		/*********/
 		if ( col_head_line == 'c' ) {
 			printf("headline\n");
 		}
-		char output[256];
-		for (uint64_t i=0; i<stats_cnt; i++) {
-			/* DEBUG */
-			sprintset(output, stats[i], 'b','n');
-			printf("%s", output);
+//		char output[256];
+//		for (uint64_t i=0; i<stats.cnt; i++) {
+//			/* DEBUG */
+//			sprintset(output, stats->array[i], 'b','n');
+//			printf("%s", output);
 			/*********/
-		}
 	}
+	free(stats.array);
 	if ( wfd != NULL ) fclose(wfd);	// close output file on -w
 	exit(0);
 }
