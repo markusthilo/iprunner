@@ -1,54 +1,41 @@
-/* IPRUNNER v0.1-20200930 */
+/* IPRUNNER v0.1-20201013 */
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <netinet/in.h>
 #include <time.h>
+#include <unistd.h>
+#include <netinet/in.h>
+//#include <ctype.h>
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.1-20200930\n\n");
+	printf("\nIPPRUNNER v0.1-20201013n\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
 	printf("Adresses, ports (on -g), oldest timestamp, youngest timestamp (first seen / last seen), the quantity\n");
 	printf("of packets and the sum of the packet volumes (as given in PCAP files as orig_len) are listed.\n\n");
-	printf("IPRUNNER uses only the C standard library, no LIBPCAP is needed.\n\n");
+	printf("IPRUNNER might not work with all PCAP files. Ethernet link layer should work.\n\n");
 	printf("Usage:\n\n");
-	printf("iprunner [--help] [-h] [-r] [-s] [-l] [-b] [-p] [-v]\n");
-	printf("\t\t[-a DELIMITER ] [-d DELIMITER] [-w PCNF-FILE] [-j JSON-FILE] INFILE1 [INFILE2 ...]\n");
-	printf("\nInput file format ist PCAP or PCNF. It is incompatible to PCAPNG.\n");
+	printf("iprunner [--help] [-h] [-r] [-c] [-i] [-n] [-g PATTERN] [-w CSV_OUTFILE] PCAP_INFILE1 [PCAP_INFILE2 ...]\n");
+	printf("\nInput file format ist PCAP. PCAPNG does not work.\n");
 	printf("\nOptions:\n\n");
 	printf("--help, -h\tPrint this help.\n");
-	printf("-r\t\tPrint timestamps, number of packets and traffic volumes in human readable format.\n");
-	printf("\t\tThe time stamps are taken from the PCAP files without any validation or adjustment.\n");
-	printf("-s\t\tPrint statistics about single addresses (default if not -w or -j).\n");
-	printf("\t\tThe list starts with the address of largest traffic volume. In most scenarios this should be\n");
-	printf("\t\tthe observed address.\n");
-	printf("-l\t\tPrint statistics about links (traffica from source to destination address).\n");
-	printf("-b\t\tPrint statistics about bidirectional links (traffic inbetween addresses, both directions).\n");
-	printf("-p\t\tPrint statistics about ports per address (one address, one port).\n");
-	printf("-v\t\tVerbose print netflow data. This will give the traffic inbetween same addresses and ports\n");
-	printf("\t\t(logical \"and\" = \"&&\" - this is the most differentiated statistic).\n");
-	printf("-c\t\tPrint a head line with the meaning of the columns as first line before the data sets.\n");
-	printf("\t\tADDR, SRC_ADDR, DST_ADDR - IP address (source / destination)\n");
-	printf("\t\tPORT, SRC_PORT, DST_PORT - port number on TCP or UDP\n");
-	printf("\t\tFIRST_TS, LAST_TS - time stamps (first seen, last seen)\n");
-	printf("\t\tTCP_PACKETS, TCP_IN_PACKETS, TCP_OUT_PACKETS - number of TCP packets (incomming / outgoing)\n");
-	printf("\t\tUDP_PACKETS, UDP_IN_PACKETS, UDP_OUT_PACKETS - number of UDP packets\n");
-	printf("\t\tOTHER_PACKETS, OTHER_IN_PACKETS, OTHER_OUT_PACKETS - other IP protocols\n");
-	printf("\t\tALL_PACKETS, ALL_IN_PACKETS, ALL_OUT_PACKETS - all IP packets (TCP+UDP+OTHER)\n");
-	printf("\t\tTCP_VOLUME, UDP_VOLUME... - same as PACKETS but the summed data volume (orig_len)\n");
-	printf("-a DELIMITER\tSets the delimiter character inbetween IP address and port number. Default is ':'.\n");
-	printf("-d DELIMITER\tSets the delimiter character inbetween other data. Default is tab stop.\n");
-	printf("-w PCNF-FILE\tWrite output to file. The file format is PCNF. You should name it 'FILENAME.pcnf'.\n");
-	printf("\t\tPCNF is the native binary file format. It is effective for large PCAP files to do this first.\n");
-	printf("-j JSON-FILE\tWrite output to file. The file format is JSON. You should name it 'FILENAME.json'.\n");
-	printf("\nOnly one statistic / output at a time.\n");
-	printf("Example: pcaprunner -w neflow.pcnf dump1.pcap dump2.pcap\n\n");
+	printf("-c\t\tPrint headlines for the columns (fields).\n");
+	printf("-r\t\tPrint timestamps and traffic volumes in human readable format.\n");
+	printf("\t\tThe time stamps are taken from the PCAP files without any validation or adjustment.\n\n");
+	printf("-i\t\tInvert sort output data (from small to large).\n");
+	printf("-n\t\tSort by number of packets instead of transfered bytes.\n");
+	printf("-g\t\ttGrep (filter) for one or two IP addresses.\n");
+	printf("\t\tPatterns:\n");
+	printf("\t\tADDRESS\tCopy packets if source or destination address matches.\n");
+	printf("\t\tADDRESS-ADDRESS\tCopy packets if one address is source and one is the destination.\n");
+	printf("\t\tCompression of IPv6 addresses removing colons does not work.\n\n");
+	printf("Examples:\n");
+	printf("iprunner -c -r -w out.tsv dump1.pcap dump2.pcap dump3.pcap\n");
+	printf("iprunner -g ff02:::::::fb dump.pcap\n");
+	printf("iprunner -g 192.168.1.7-216.58.207.78 -w out.tsv dump.pcap\n\n");
 	printf("Use this piece of software on your own risk. Accuracy is not garanteed.\n\n");
 	printf("Report bugs to: markus.thilo@gmail.com\n\n");
 	printf("Project page: https://github.com/markusthilo/iprunner\n\n");
@@ -282,8 +269,10 @@ void fprintaddr(FILE *wfd, struct ipaddr ip) {
 }
 
 /* Print port number if grep pattern is given */
-void fprintport(FILE *wfd, uint16_t port, char set_type) {
-	if ( set_type != 'b' ) fprintf(wfd, "\t%u", port);
+void fprintport(FILE *wfd, uint16_t port, char set_type, char protocol) {
+	if ( set_type == 'b' ) return;
+	if ( protocol == 'o' ) fprintf(wfd, "\t-");
+	else fprintf(wfd, "\t%u", port);
 }
 
 /* Print timestamp regardless timezone - just as it is stored in the PCAP file */
@@ -299,73 +288,57 @@ void fprintts(FILE *wfd, uint64_t ts, char format) {
 	fprintf(wfd, ".%06lu", ts & 0xffffffff);	// add microseconds
 }
 
-/* Print traffic volume in Bytes or GB/MB/KB */
-void fprintsum(FILE *wfd, uint64_t sum, char format) {
-	if ( format == 'r' ) {	// print in human readable format
-		uint64_t tmp = sum / 1000000000000000;
-		if ( tmp > 9 ) {
-			fprintf(wfd, "\t%lu PB", tmp);
-			return;
-		}
-		tmp = sum / 1000000000000;
-		if ( tmp > 9 ) {
-			fprintf(wfd, "\t%lu TB", tmp);
-			return;
-		}
-		tmp = sum / 1000000000;
-		if ( tmp > 9 ) {
-			fprintf(wfd, "\t%lu GB", tmp);
-			return;
-		}
-		tmp = sum / 1000000;
-		if ( tmp > 9 ) {
-			fprintf(wfd, "\t%lu MB", tmp);
-			return;
-		}
-		tmp = sum / 1000;
-		if ( tmp > 9 ) {
-			fprintf(wfd, "\t%lu kB", tmp);
-			return;
-		}
-		fprintf(wfd, "\t%lu B", sum);
-		return;
-	}
-	fprintf(wfd, "\t%lu", sum);
-}
-
 /* Print head line*/
 void fprinthead(FILE *wfd, char set_type) {
-	if ( set_type == 'b' )	// basic set
-		fprintf(wfd, "SRC_ADDR\tDST_ADDR\tFIRST_TS\tLAST_TS\tTCP_PACKETS\tUDP_PACKETS\tOTHER_PACKET\tALL_PACKETS\tTCP_VOLUME\tUDP_VOLUME\tOTHER_VOLUME\tALL_VOLUME\n");
-	else fprintf(wfd, "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tFIRST_TS\tLAST_TS\tTCP_PACKETS\tUDP_PACKETS\tOTHER_PACKET\tALL_PACKETS\tTCP_VOLUME\tUDP_VOLUME\tOTHER_VOLUM\tALL_VOLUME\n");
+	if ( set_type == 'b' ) fprintf(wfd, "SRC_ADDR\tDST_ADDR\tPROTOCOL");
+	else fprintf(wfd, "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tPROTOCOL");
+	fprintf(wfd, "\tFIRST_TS\tLAST_TS\tPACKETS\tVOLUME\n");
 }
 
 /* Structure for one statistical data set */
 struct statset {
 	struct ipaddr src_addr, dst_addr;
 	uint16_t src_port, dst_port;
-	uint64_t first_seen, last_seen,
-		cnt_tcp, cnt_udp, cnt_other, cnt_all,
-		sum_tcp, sum_udp, sum_other, sum_all;
+	char protocol;
+	uint64_t first_seen, last_seen, cnt, sum;
 };
 
 /* Print one data set to string as one line*/
 void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
 	fprintaddr(wfd, set.src_addr);
-	fprintport(wfd, set.src_port, set_type);
+	fprintport(wfd, set.src_port, set_type, set.protocol);
 	fprintf(wfd, "\t");
 	fprintaddr(wfd, set.dst_addr);
-	fprintport(wfd, set.dst_port, set_type);
+	fprintport(wfd, set.dst_port, set_type, set.protocol);
+	switch (set.protocol) {
+		case 't': fprintf(wfd, "\ttcp"); break;
+		case 'u': fprintf(wfd, "\tudp"); break;
+		default: fprintf(wfd, "\tother");
+	}
 	fprintts(wfd, set.first_seen, format);
 	fprintts(wfd, set.last_seen, format);
-	fprintf(wfd, "\t%lu", set.cnt_tcp);
-	fprintf(wfd, "\t%lu", set.cnt_udp);
-	fprintf(wfd, "\t%lu", set.cnt_other);
-	fprintf(wfd, "\t%lu", set.cnt_all);
-	fprintsum(wfd, set.sum_tcp, format);
-	fprintsum(wfd, set.sum_udp, format);
-	fprintsum(wfd, set.sum_other, format);
-	fprintsum(wfd, set.sum_all, format);
+	fprintf(wfd, "\t%lu\t", set.cnt);
+	if ( format == 'r' ) {	// print in human readable format
+		uint64_t tmp = set.sum / 1000000000000000;
+		if ( tmp > 9 ) fprintf(wfd, "%lu PB\n", tmp);
+		else {
+			tmp = set.sum / 1000000000000;
+			if ( tmp > 9 ) fprintf(wfd, "%lu TB\n", tmp);
+			else {
+				tmp = set.sum / 1000000000;
+				if ( tmp > 9 ) fprintf(wfd, "%lu GB\n", tmp);
+				else {
+					tmp = set.sum / 1000000;
+					if ( tmp > 9 ) fprintf(wfd, "%lu MB\n", tmp);
+					else {
+						tmp = set.sum / 1000;
+						if ( tmp > 9 ) fprintf(wfd, "%lu kB\n", tmp);
+						else fprintf(wfd, "%lu B\n", set.sum);
+					}
+				}
+			}
+		}
+	} else  fprintf(wfd, "\t%lu\n", set.sum);
 }
 
 /* Structure for pcap file header */
@@ -490,7 +463,7 @@ struct packetdata readlayer3(FILE *fd, struct packetdata packet) {
 /* Read transport layer */
 struct packetdata readlayer4(FILE *fd, struct packetdata packet) {
 	packet.error = 1;	
-	if ( packet.protocol == 6 || packet.protocol == 17 ) {	// TCP or UDP
+	if ( packet.protocol != 'o' ) {	// TCP or UDP
 		uint8_t b[4];
 		if (fread(&b, 4, 1, fd) != 1) return packet;	// read ip layer
 		packet.seek2next -= 4;		
@@ -498,6 +471,7 @@ struct packetdata readlayer4(FILE *fd, struct packetdata packet) {
 		packet.dst_port = readuint16(b, 2);	// read destination port
 	}
 	packet.error = 0;
+	return packet;
 }
 
 /* Read packet from pcap file */
@@ -532,33 +506,11 @@ void appendset(struct sarray *stats, struct packetdata packet) {
 	stats->array[stats->cnt].dst_addr = packet.dst_addr;
 	stats->array[stats->cnt].src_port = packet.src_port;
 	stats->array[stats->cnt].dst_port = packet.dst_port;
+	stats->array[stats->cnt].protocol = packet.protocol;
 	stats->array[stats->cnt].first_seen = packet.ts;
 	stats->array[stats->cnt].last_seen = packet.ts;
-	switch (packet.protocol) {
-		case 't':	// TCP
-			stats->array[stats->cnt].sum_tcp = packet.orig_len;	// set traffic volume
-			stats->array[stats->cnt].cnt_tcp = 1;	// set packet counter
-			stats->array[stats->cnt].sum_udp = 0;
-			stats->array[stats->cnt].cnt_udp = 0;
-			stats->array[stats->cnt].sum_other = 0;
-			stats->array[stats->cnt].cnt_other = 0;
-			break;
-		case 'u':	// UDP
-			stats->array[stats->cnt].sum_tcp = 0;
-			stats->array[stats->cnt].cnt_tcp = 0;
-			stats->array[stats->cnt].sum_udp = packet.orig_len;	// set traffic volume
-			stats->array[stats->cnt].cnt_udp = 1;	// set packet counter
-			stats->array[stats->cnt].sum_other = 0;
-			stats->array[stats->cnt].cnt_other = 0;
-			break;
-		default:	// other IP packet
-			stats->array[stats->cnt].sum_tcp = 0;
-			stats->array[stats->cnt].cnt_tcp = 0;
-			stats->array[stats->cnt].sum_udp = 0;
-			stats->array[stats->cnt].cnt_udp = 0;
-			stats->array[stats->cnt].sum_other = packet.orig_len;	// set traffic volume
-			stats->array[stats->cnt].cnt_other = 1;	// set packet counter
-	}
+	stats->array[stats->cnt].cnt = 1;
+	stats->array[stats->cnt].sum = packet.orig_len;
 	stats->cnt += 1;	// updatet counter
 }
 
@@ -566,81 +518,38 @@ void appendset(struct sarray *stats, struct packetdata packet) {
 void updatetscntsum(struct statset *set, struct packetdata packet) {
 	if ( packet.ts > set->last_seen ) set->last_seen = packet.ts;	// update timestamps
 	else if ( packet.ts < set->first_seen ) set->first_seen = packet.ts;
-	switch (packet.protocol) {
-		case 't':	// TCP
-			set->sum_tcp += packet.orig_len;	// update sum of traffic volume
-			set->cnt_tcp++;	// increase packet counter
-			break;
-		case 'u':	// UDP
-			set->sum_udp += packet.orig_len;	// update sum of traffic volume
-			set->cnt_udp++;	// increase packet counter
-			break;
-		case 'o':	// other ip protocol
-			set->sum_other += packet.orig_len;	// update sum of traffic volume
-			set->cnt_other++;	// increase packet counter
-	}
+	set->cnt += 1;
+	set->sum += packet.orig_len;
+}
+
+/* Check if protocol, source and destination addresses matches */
+int chckproaddr(struct statset set, struct packetdata packet) {
+	if ( ( packet.protocol == set.protocol )	// identical protocol?
+		&& ( eqaddr(packet.src_addr, set.src_addr) == 1 )	// identical addresses?
+		&& ( eqaddr(packet.dst_addr, set.dst_addr) == 1 )
+	) return 1;
+	return 0;
+}
+
+/* Check if ports matches */
+int chckports(struct statset set, struct packetdata packet) {
+	if ( ( packet.src_port == set.src_port ) && ( packet.dst_port == set.dst_port ) ) return 1;
+	return 0;
 }
 
 /* Update array with basic address to address statistics, port is ignored */
-void updatebasic(struct sarray *stats, struct packetdata packet) {
+void searchset(struct sarray *stats, struct packetdata packet, char set_type) {
 	for (uint64_t i=0; i<stats->cnt; i++) {	// loop through the array
-		if ( ( eqaddr(packet.src_addr, stats->array[i].src_addr) == 1 )	// if identical addresses
-			&& ( eqaddr(packet.dst_addr, stats->array[i].dst_addr) == 1 ) ) {
-			updatetscntsum(&stats->array[i], packet);
-			return;
-		}
+		if ( chckproaddr(stats->array[i], packet) == 0 ) continue;	// different protocol or addresses?
+		if ( ( set_type != 'b' )	// if other than basic statistics: different ports?
+			&& ( ( packet.src_port != stats->array[i].src_port )
+				|| ( packet.dst_port != stats->array[i].dst_port )
+			)
+		) continue;
+		updatetscntsum(&stats->array[i], packet);
+		return;
 	}
 	appendset(stats, packet);	// no match -> append new data set to array
-}
-
-/* Update array, check address and port */
-void updateaddrport(struct sarray *stats, struct packetdata packet) {
-	for (uint64_t i=0; i<stats->cnt; i++) {	// loop through the stored data
-		if ( ( eqaddr(packet.src_addr, stats->array[i].src_addr) == 1 )	// if identical addresses
-			&& ( eqaddr(packet.dst_addr, stats->array[i].dst_addr) == 1 )
-			&& ( packet.src_port == stats->array[i].src_port )	// and identical ports
-			&& ( packet.dst_port == stats->array[i].dst_port ) ) {
-				updatetscntsum(&stats->array[i], packet);
-				return;
-		}
-	}
-	appendset(stats, packet);	// no match -> append new data set to array
-}
-
-/* Update array for target address option */
-void updatetarget(struct sarray *stats, struct packetdata packet, struct ipaddr target) {
-	if ( eqaddr(packet.src_addr, target) == 1 || eqaddr(packet.dst_addr, target) == 1 )	// if src or dst is target
-		updateaddrport(stats, packet);
-}
-
-/* Update array for link address option */
-void updatelink(struct sarray *stats, struct packetdata packet, struct ipaddr target1, struct ipaddr target2) {
-	if ( ( eqaddr(packet.src_addr, target1) == 1
-			&& eqaddr(packet.dst_addr, target2) == 1 )	// if src is target1 and dst is target2
-		|| ( eqaddr(packet.src_addr, target2) == 1
-			&& eqaddr(packet.dst_addr, target1) == 1 ) )	// or src ist target2 and dst is target1
-			updateaddrport(stats, packet);
-}
-
-/* Create cnt_all and sum_all, then sort sets by sum_all */
-void sortstats(struct sarray *stats) {
-	struct statset tmp;
-	uint64_t swapped;
-	for (uint64_t i=0; i<stats->cnt; i++) {	// loop through sets to sum traffic
-		stats->array[i].cnt_all = stats->array[i].cnt_tcp + stats->array[i].cnt_udp + stats->array[i].cnt_other;
-		stats->array[i].sum_all = stats->array[i].sum_tcp + stats->array[i].sum_udp + stats->array[i].sum_other;
-	}
-	do {	// bubblesort
-		swapped = 0;
-		for (uint64_t i=1; i<stats->cnt; i++) {
-			if ( stats->array[i-1].sum_all < stats->array[i].sum_all ) {
-				tmp = stats->array[i-1];
-				stats->array[i-1] = stats->array[i];
-				stats->array[i] = tmp;
-				swapped++;
-			}
-		}
-	} while ( swapped > 0 );
 }
 
 /* Main function - program starts here*/
@@ -650,12 +559,14 @@ int main(int argc, char **argv) {
 	|| ( ( argv[1][0] == '-' ) && ( argv[1][1] == 'h' ) ) ) ) help(0);
 	else if ( argc < 2 ) help(1);	// also show help if no argument is given but return with exit(1)
 	char opt;	// command line options
-	char readable_format = 'n', col_head_line = 'n';	// output options human readable and headlines for columns
+	char readable_format = ' ', col_head_line = ' ', sort_invert = ' ', sort_cnt = ' ';	// default options
 	char *gvalue = NULL, *wvalue = NULL;	// pointer to command line arguments
-	while ((opt = getopt(argc, argv, "rcg:w:")) != -1)	// command line arguments
+	while ((opt = getopt(argc, argv, "rcing:w:")) != -1)	// command line arguments
 		switch (opt) {
-			case 'r': readable_format = 'r'; break;// human readable output format
+			case 'r': readable_format = 'r'; break;	// human readable output format
 			case 'c': col_head_line = 'c'; break;	// show meanings of columns in a head line
+			case 'i': sort_invert = 'i'; break;	// human readable output format
+			case 'n': sort_cnt = 'n'; break;	// human readable output format
 			case 'g': gvalue = optarg; break;	// get grep argument
 			case 'w': wvalue = optarg; break;	// set output file
 			case '?':
@@ -679,18 +590,12 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "Error: output file %s exists.\n", wvalue);
 			exit(1);
 		}
-		wfd = fopen(argv[2], "w");	// open output file
+		wfd = fopen(wvalue, "w");	// open output file
 		if ( wfd == NULL ) {
 			fprintf(stderr, "Error: could not open output file %s.\n", argv[2]);
 			exit(1);
 		}
 	}
-
-	/* DEBUG */
-	printf("readable_format: >%c<, col_head_line: >%c<\n", readable_format, col_head_line);
-	printf("grep: ip1 = %016lx %016lx, ip2 =  %016lx %016lx, type = >%c<\n", grep.ip1.addr[0], grep.ip1.addr[1], grep.ip2.addr[0], grep.ip2.addr[1], grep.type);
-	/*********/
-	
 	struct sarray stats;	// all calculated data goes in stats
 	stats.blk =  100;
 	stats.cnt = 0;
@@ -723,9 +628,19 @@ int main(int argc, char **argv) {
 			}
 			if ( packet.ipv == 0 ) continue;	// do not count and go to next packet - no ip packet
 			switch (grep.type) {	// calculation depends on grep method (or none)
-				case 't': updatetarget(&stats, packet, grep.ip1); break;
-				case 'l': updatelink(&stats, packet, grep.ip1, grep.ip2); break;
-				default: updatebasic(&stats, packet);
+				case 't':
+					if ( ( eqaddr(packet.src_addr, grep.ip1) == 1 )	// src or dst address is target?
+						|| ( eqaddr(packet.dst_addr, grep.ip1) == 1 )	
+					) searchset(&stats, packet, 't');
+					break;
+				case 'l':
+					if ( ( eqaddr(packet.src_addr, grep.ip1) == 1
+							&& eqaddr(packet.dst_addr, grep.ip2) == 1 )	// if src is target1 and dst is target2
+						|| ( eqaddr(packet.src_addr, grep.ip2) == 1
+							&& eqaddr(packet.dst_addr, grep.ip1) == 1 )	// or src ist target2 and dst is target1
+					) searchset(&stats, packet, 'l');
+					break;
+				default: searchset(&stats, packet, 'b');
 			}
 		} while ( packet.error == 0 );	// until end of pcap file
 		fclose(fd);	// close pcap file
@@ -734,14 +649,64 @@ int main(int argc, char **argv) {
 		fprinthead(wfd, grep.type);
 	}
 	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
-		for (uint64_t i=0; i<stats.cnt; i++) {	// loop through sets to sum traffic
-			stats.array[i].cnt_all = stats.array[i].cnt_tcp + stats.array[i].cnt_udp + stats.array[i].cnt_other;
-			stats.array[i].sum_all = stats.array[i].sum_tcp + stats.array[i].sum_udp + stats.array[i].sum_other;
+		uint64_t swapped;	// sort data sets
+		struct statset tmp;
+		if ( sort_cnt == 'n' ) {
+			if ( sort_invert == 'i' ) {
+				do {	// bubblesort cnt little to big
+					swapped = 0;
+					for (uint64_t i=1; i<stats.cnt; i++) {
+						if ( stats.array[i-1].cnt > stats.array[i].cnt ) {
+							tmp = stats.array[i-1];
+							stats.array[i-1] = stats.array[i];
+							stats.array[i] = tmp;
+							swapped++;
+						}
+					}
+				} while ( swapped > 0 );
+			
+			} else {
+				do {	// bubblesort cnt big to little
+					swapped = 0;
+					for (uint64_t i=1; i<stats.cnt; i++) {
+						if ( stats.array[i-1].cnt < stats.array[i].cnt ) {
+							tmp = stats.array[i-1];
+							stats.array[i-1] = stats.array[i];
+							stats.array[i] = tmp;
+							swapped++;
+						}
+					}
+				} while ( swapped > 0 );
+			}
+		} else {
+			if ( sort_invert == 'i' ) {
+				do {	// bubblesort sum little to big
+					swapped = 0;
+					for (uint64_t i=1; i<stats.cnt; i++) {
+						if ( stats.array[i-1].sum > stats.array[i].sum ) {
+							tmp = stats.array[i-1];
+							stats.array[i-1] = stats.array[i];
+							stats.array[i] = tmp;
+							swapped++;
+						}
+					}
+				} while ( swapped > 0 );
+			
+			} else {
+				do {	// bubblesort sum big to little
+					swapped = 0;
+					for (uint64_t i=1; i<stats.cnt; i++) {
+						if ( stats.array[i-1].sum < stats.array[i].sum ) {
+							tmp = stats.array[i-1];
+							stats.array[i-1] = stats.array[i];
+							stats.array[i] = tmp;
+							swapped++;
+						}
+					}
+				} while ( swapped > 0 );
+			}
 		}
-		/* DEBUG */
-		printf("EOF: stats.cnt = %lu\n", stats.cnt);
-		/*********/
-		for (uint64_t i=0; i<stats.cnt; i++) {
+		for (uint64_t i=0; i<stats.cnt; i++) {	// print list or write to file
 			fprintset(wfd, stats.array[i], grep.type, readable_format);
 		}
 	}
