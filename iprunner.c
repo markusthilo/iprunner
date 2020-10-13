@@ -258,17 +258,17 @@ struct gpattern getgrep(char *string) {
 	return gp;
 }
 
-/* Print address to string*/
-char *sprintaddr(char *dst_str, struct ipaddr ip) {
+/* Print address */
+void fprintaddr(FILE *wfd, struct ipaddr ip) {
 	if ( ipversion(ip) == 4 )	/* ip v4 */
-		sprintf(dst_str, "%lu.%lu.%lu.%lu",
+		fprintf(wfd, "%lu.%lu.%lu.%lu",
 			( ip.addr[1] >> 24 ) & 0xff,
 			( ip.addr[1] >> 16 ) & 0xff,
 			( ip.addr[1] >> 8 ) & 0xff,
 			ip.addr[1] & 0xff
 		);
 	else {	/* ip v6 */
-		sprintf(dst_str, "%lx:%lx:%lx:%lx:%lx:%lx:%lx:%lx",
+		fprintf(wfd, "%lx:%lx:%lx:%lx:%lx:%lx:%lx:%lx",
 			( ip.addr[0] >> 48 ) & 0xffff,
 			( ip.addr[0] >> 32 ) & 0xffff,
 			( ip.addr[0] >> 16 ) & 0xffff,
@@ -279,144 +279,65 @@ char *sprintaddr(char *dst_str, struct ipaddr ip) {
 			ip.addr[1] & 0xffff
 		);
 	}
-	return dst_str;
 }
 
-/* Print timestamp to string regardless timezone - just as it is stored in the PCAP file */
-char *sprintts(char *dst_str, uint64_t ts, char format) {
+/* Print port number if grep pattern is given */
+void fprintport(FILE *wfd, uint16_t port, char set_type) {
+	if ( set_type != 'b' ) fprintf(wfd, "\t%u", port);
+}
+
+/* Print timestamp regardless timezone - just as it is stored in the PCAP file */
+void fprintts(FILE *wfd, uint64_t ts, char format) {
 	if ( format == 'r' ) {	// print in human readable format, might be GMT
 		struct tm *ts_info;
 		time_t ts_sec;
 		ts_sec = (time_t)(ts >> 32);
-		strftime(dst_str, 20, "%Y-%m-%d %X", localtime(&ts_sec));
-	} else sprintf(dst_str, "%lu", ts >> 32);	// seconds since 1970
-	char ms[8];
-	sprintf(ms, ".%06lu", ts & 0xffffffff);	// add microseconds
-	strcat(dst_str, ms);
-	return dst_str;
+		char ts_str[32];
+		strftime(ts_str, 20, "%Y-%m-%d %X", localtime(&ts_sec));
+		fprintf(wfd, "\t%s", ts_str);
+	} else fprintf(wfd, "\t%lu", ts >> 32);	// seconds since 1970
+	fprintf(wfd, ".%06lu", ts & 0xffffffff);	// add microseconds
 }
 
-/* Print traffic counter to string */
-char *sprintcnt(char *dst_str, uint64_t cnt, char format) {
-	if ( format == 'r' ) {	// print in human readable format
-		dst_str = "";
-		const uint64_t pt[6] = {
-			1000000000000000000,
-			1000000000000000,
-			1000000000000,
-			1000000000,
-			1000000,
-			1000};
-		uint64_t tmp_int;
-		char tmp_str[8];
-		int zeros = 0;
-		for (int i=0; i<6; i++) {
-			tmp_int = cnt / pt[i];
-			
-						printf("!!!!!! >%s<, %lu\n", dst_str, cnt);
-			
-			if ( tmp_int > 0 ) {
-				if (zeros == 1) sprintf(tmp_str, "%03u ", (unsigned int) tmp_int);
-				else sprintf(tmp_str, "%u ", (unsigned int) tmp_int);
-				strcat(dst_str, tmp_str);
-				cnt = cnt % pt[i];
-				zeros = 1;
-			}
-		}
-		if (zeros == 1) sprintf(tmp_str, "%03lu", cnt);
-				else sprintf(tmp_str, "%lu", cnt);
-		strcat(dst_str, tmp_str);
-	} else sprintf(dst_str, "%lu", cnt);
-	return dst_str;
-}
-
-/* Print traffic volume in Bytes or GB/MB/KB to string */
-char *sprintsum(char *dst_str, uint64_t sum, char format) {
+/* Print traffic volume in Bytes or GB/MB/KB */
+void fprintsum(FILE *wfd, uint64_t sum, char format) {
 	if ( format == 'r' ) {	// print in human readable format
 		uint64_t tmp = sum / 1000000000000000;
 		if ( tmp > 9 ) {
-			sprintf(dst_str, "%lu PB", tmp);
-			return dst_str;
+			fprintf(wfd, "\t%lu PB", tmp);
+			return;
 		}
 		tmp = sum / 1000000000000;
 		if ( tmp > 9 ) {
-			sprintf(dst_str, "%lu TB", tmp);
-			return dst_str;
+			fprintf(wfd, "\t%lu TB", tmp);
+			return;
 		}
 		tmp = sum / 1000000000;
 		if ( tmp > 9 ) {
-			sprintf(dst_str, "%lu GB", tmp);
-			return dst_str;
+			fprintf(wfd, "\t%lu GB", tmp);
+			return;
 		}
 		tmp = sum / 1000000;
 		if ( tmp > 9 ) {
-			sprintf(dst_str, "%lu MB", tmp);
-			return dst_str;
+			fprintf(wfd, "\t%lu MB", tmp);
+			return;
 		}
 		tmp = sum / 1000;
 		if ( tmp > 9 ) {
-			sprintf(dst_str, "%lu kB", tmp);
-			return dst_str;
+			fprintf(wfd, "\t%lu kB", tmp);
+			return;
 		}
+		fprintf(wfd, "\t%lu B", sum);
+		return;
 	}
-	sprintf(dst_str, "%lu B", sum);
-	return dst_str;
+	fprintf(wfd, "\t%lu", sum);
 }
 
-/* Append \t + address to string */
-char *appendaddr(char *dst_str, struct ipaddr addr) {
-	char addr_str[24];
-	sprintaddr(addr_str, addr); 
-	strcat(dst_str, "\t");
-	strcat(dst_str, addr_str);
-	return dst_str;
-}
-
-/* Append port number to string */
-char *appendport(char *dst_str, uint16_t port, char set_type) {
-	if ( set_type != 'b' ) { 
-		char port_str[8];
-		sprintf(port_str, "\t%d", port);
-		strcat(dst_str, port_str);
-	}
-	return dst_str;
-}
-
-/* Append time stamp to string */
-char *appendts(char *dst_str, uint64_t ts, char format) {
-	char ts_str[32];
-	sprintts(ts_str, ts, format); 
-	strcat(dst_str, "\t");
-	strcat(dst_str, ts_str);
-	return dst_str;
-}
-
-/* Append \t + counter to string */
-char *appendcnt(char *dst_str, uint64_t cnt, char format) {
-	char cnt_str[32];
-	sprintcnt(cnt_str, cnt, format);
-	strcat(dst_str, "\t");
-	strcat(dst_str, cnt_str);
-	return dst_str;
-}
-
-/* Append \t + traffic volume to string */
-char *appendsum(char *dst_str, uint64_t sum, char format) {
-	char sum_str[32];
-	sprintsum(dst_str, sum, format);
-	strcat(dst_str, "\t");
-	strcat(dst_str, sum_str);
-	return dst_str;
-}
-
-/* Print head line to string */
-char *sprinthead(char *dst_str, char set_type) {
-	if ( set_type == 'b' ) {	// basic set
-		dst_str = "SRC_ADDR\tDST_ADDR\tFIRST_TS\tLAST_TS\tTCP_PACKETS\tUDP_PACKETS\tOTHER_PACKET\tALL_PACKETS\tTCP_VOLUME\tUDP_VOLUME\tOTHER_VOLUME\tALL_VOLUME\n";
-	} else {	// target set
-		dst_str = "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tFIRST_TS\tLAST_TS\tTCP_PACKETS\tUDP_PACKETS\tOTHER_PACKET\tALL_PACKETS\tTCP_VOLUME\tUDP_VOLUME\tOTHER_VOLUM\tALL_VOLUME\n";
-	}
-	return dst_str;
+/* Print head line*/
+void fprinthead(FILE *wfd, char set_type) {
+	if ( set_type == 'b' )	// basic set
+		fprintf(wfd, "SRC_ADDR\tDST_ADDR\tFIRST_TS\tLAST_TS\tTCP_PACKETS\tUDP_PACKETS\tOTHER_PACKET\tALL_PACKETS\tTCP_VOLUME\tUDP_VOLUME\tOTHER_VOLUME\tALL_VOLUME\n");
+	else fprintf(wfd, "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tFIRST_TS\tLAST_TS\tTCP_PACKETS\tUDP_PACKETS\tOTHER_PACKET\tALL_PACKETS\tTCP_VOLUME\tUDP_VOLUME\tOTHER_VOLUM\tALL_VOLUME\n");
 }
 
 /* Structure for one statistical data set */
@@ -429,25 +350,22 @@ struct statset {
 };
 
 /* Print one data set to string as one line*/
-char *sprintset(char *dst_str, struct statset set, char set_type, char format) {
-	sprintaddr(dst_str, set.src_addr);
-	appendport(dst_str, set.src_port, set_type);
-	appendaddr(dst_str, set.dst_addr);
-	appendport(dst_str, set.dst_port, set_type);
-	appendts(dst_str, set.first_seen, format);
-	appendts(dst_str, set.last_seen, format);
-	appendcnt(dst_str, set.cnt_tcp, format);
-					printf("%s\n", dst_str);
-	appendcnt(dst_str, set.cnt_udp, format);
-	appendcnt(dst_str, set.cnt_other, format);
-	appendcnt(dst_str, set.cnt_all, format);
-	appendsum(dst_str, set.sum_tcp, format);
-	appendsum(dst_str, set.sum_udp, format);
-	appendsum(dst_str, set.sum_other, format);
-	appendsum(dst_str, set.sum_all, format);
-	strcat(dst_str, "\n");
-
-	return dst_str;
+void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
+	fprintaddr(wfd, set.src_addr);
+	fprintport(wfd, set.src_port, set_type);
+	fprintf(wfd, "\t");
+	fprintaddr(wfd, set.dst_addr);
+	fprintport(wfd, set.dst_port, set_type);
+	fprintts(wfd, set.first_seen, format);
+	fprintts(wfd, set.last_seen, format);
+	fprintf(wfd, "\t%lu", set.cnt_tcp);
+	fprintf(wfd, "\t%lu", set.cnt_udp);
+	fprintf(wfd, "\t%lu", set.cnt_other);
+	fprintf(wfd, "\t%lu", set.cnt_all);
+	fprintsum(wfd, set.sum_tcp, format);
+	fprintsum(wfd, set.sum_udp, format);
+	fprintsum(wfd, set.sum_other, format);
+	fprintsum(wfd, set.sum_all, format);
 }
 
 /* Structure for pcap file header */
@@ -752,37 +670,34 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "Error: at least one input file is required.\n");
 		exit(1);
 	}
-	struct gpattern grep;
-	grep.type = 'b';
+	struct gpattern grep;	// grep pattern
+	grep.type = 'b';	// defailt is no grep pattern = basic calculation
 	if ( gvalue != NULL ) grep = getgrep(gvalue);	// option -g = grep
-	FILE *wfd = NULL;
+	FILE *wfd = stdout;	// destination file pointer
 	if ( wvalue != NULL ) {	// option -w
 		if ( access(wvalue, F_OK) != -1 ) {	// check for existing file
 			fprintf(stderr, "Error: output file %s exists.\n", wvalue);
 			exit(1);
 		}
-		wfd = fopen(argv[2], "wb");	// open output file
+		wfd = fopen(argv[2], "w");	// open output file
 		if ( wfd == NULL ) {
 			fprintf(stderr, "Error: could not open output file %s.\n", argv[2]);
 			exit(1);
 		}
 	}
-	
+
 	/* DEBUG */
 	printf("readable_format: >%c<, col_head_line: >%c<\n", readable_format, col_head_line);
 	printf("grep: ip1 = %016lx %016lx, ip2 =  %016lx %016lx, type = >%c<\n", grep.ip1.addr[0], grep.ip1.addr[1], grep.ip2.addr[0], grep.ip2.addr[1], grep.type);
-	char outline[256] = "T E S T\n";
 	/*********/
 	
-	struct sarray stats;
+	struct sarray stats;	// all calculated data goes in stats
 	stats.blk =  100;
 	stats.cnt = 0;
 	stats.size = stats.blk;
-
 	stats.array = malloc(sizeof(struct statset)*stats.blk);	// allocate ram for the arrays to store data
 	if ( stats.array == NULL ) memerror();	// just in case...
-
-	struct pcapheader pcap;
+	struct pcapheader pcap;	// head infos from pcap file(s)
 	FILE *fd = NULL;	// pcap file pointer
 	uint8_t filetype[8];	// to get file type / magic number
 	struct packetdata packet;	// packet from pcap file
@@ -793,14 +708,14 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "Error: could not open file %s.\n", argv[i]);
 			exit(1);
 		}
-		pcap = readpcapheader(fd);
+		pcap = readpcapheader(fd);	// read pcap file header
 		switch (pcap.error) {
 			case 1 : fprintf(stderr, "Error: could not read file header: %s.\n", argv[i]); exit(1);
 			case 2 : fprintf(stderr, "Error: wrong file type: %s.\n", argv[i]); exit(1);
 			case 3 : fprintf(stderr, "Error: wrong link-layer: %s\n", argv[i]); exit(1);
 		}
 		do {	// loop through packets (endless until skipping by return)
-			packet = readpacket(fd, pcap);
+			packet = readpacket(fd, pcap);	// read one packet from pcap file
 			if ( packet.error > 0 ) break;	// end of file might be reached
 			if ( packet.error == 1 ) {
 				fprintf(stderr, "Error while reading from file %s.\n", argv[i]);
@@ -812,32 +727,25 @@ int main(int argc, char **argv) {
 				case 'l': updatelink(&stats, packet, grep.ip1, grep.ip2); break;
 				default: updatebasic(&stats, packet);
 			}
-
-			sprintset(outline, stats.array[stats.cnt-1], grep.type, readable_format);
-
-//			printf("%d: %x / %d\n", stats.cnt, stats.array[1602487635stats.cnt].src_addr.addr[1], stats.array[stats.cnt].cnt_tcp);
-//			printf("%s", outline);
 		} while ( packet.error == 0 );	// until end of pcap file
 		fclose(fd);	// close pcap file
 	}
-	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
-//		sortstats(stats, stats.cnt);
-		/* DEBUG */
-		
-		printf("EOF: stats.cnt = %lu\n", stats.cnt);
-		
-		/*********/
-		if ( col_head_line == 'c' ) {
-			printf("headline\n");
-		}
-//		char output[256];
-//		for (uint64_t i=0; i<stats.cnt; i++) {
-//			/* DEBUG */
-//			sprintset(output, stats->array[i], 'b','n');
-//			printf("%s", output);
-			/*********/
+	if ( col_head_line == 'c' ) {	// option -c
+		fprinthead(wfd, grep.type);
 	}
-	free(stats.array);
+	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
+		for (uint64_t i=0; i<stats.cnt; i++) {	// loop through sets to sum traffic
+			stats.array[i].cnt_all = stats.array[i].cnt_tcp + stats.array[i].cnt_udp + stats.array[i].cnt_other;
+			stats.array[i].sum_all = stats.array[i].sum_tcp + stats.array[i].sum_udp + stats.array[i].sum_other;
+		}
+		/* DEBUG */
+		printf("EOF: stats.cnt = %lu\n", stats.cnt);
+		/*********/
+		for (uint64_t i=0; i<stats.cnt; i++) {
+			fprintset(wfd, stats.array[i], grep.type, readable_format);
+		}
+	}
+	free(stats.array);	// might be redundant before exit
 	if ( wfd != NULL ) fclose(wfd);	// close output file on -w
 	exit(0);
 }
