@@ -22,6 +22,8 @@ Options:
 -r		Print timestamps and traffic volumes in human readable format.
 		The time stamps are taken from the PCAP files without any validation or adjustment.
 
+-i		Invert sort output data (from small to large).
+-n		Sort by number of packets instead of transfered bytes.
 -g		tGrep (filter) for one or two IP addresses.
 		Patterns:
 		ADDRESS	Copy packets if source or destination address matches.
