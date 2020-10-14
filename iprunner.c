@@ -1,4 +1,4 @@
-/* IPRUNNER v0.1-20201013 */
+/* IPRUNNER v0.1-20201014 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,7 +10,7 @@
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.1-20201013n\n");
+	printf("\nIPPRUNNER v0.1-20201014n\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
@@ -400,32 +400,32 @@ struct packetdata readframe(FILE *fd, uint32_t magic_number) {
 	return packet;
 }
 
-/* Read null ot data link layer */
+/* Read null or data link layer */
 struct packetdata readlayer2(FILE *fd, struct packetdata packet, uint32_t network) {
 	packet.error = 1;	//	1 means something went wrong
 	packet.ipv = 0;
 	uint8_t b[14];
 	switch (network) {	// data link type
-		case 0:
+		case 0:	// null
 			if (fread(&b, 4, 1, fd) != 1) return packet;	// family and version
+			packet.error = 0;
 			packet.seek2next -= 4;
 			uint32_t family = readuint32(b, 0);
 			switch (family) {
 				case 0x2000000: packet.ipv = 4; break;	// ipv4
-				case 0x1800000: packet.ipv = 6; break;	// ipv6
+				case 0x1800000: packet.ipv = 6;	// ipv6
 			}
 			break;
-		case 1:
+		case 1:	// ethernet
 			if (fread(&b, 14, 1, fd) != 1) return packet;	// ethernet layer
+			packet.error = 0;
 			packet.seek2next -= 14;
 			uint16_t type = readuint16(b, 12);	// get type
 			switch (type) {
 				case 0x0800: packet.ipv = 4; break;	// ipv4
-				case 0x86dd: packet.ipv = 6; break;	// ipv6
+				case 0x86dd: packet.ipv = 6;	// ipv6
 			}
-			break;
 	}
-	packet.error = 0;
 	return packet;
 }
 
