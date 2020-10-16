@@ -1,4 +1,4 @@
-/* IPRUNNER v0.1-20201014 */
+/* IPRUNNER v0.2-20201016 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -27,6 +27,8 @@ void help(int r){
 	printf("\t\tThe time stamps are taken from the PCAP files without any validation or adjustment.\n\n");
 	printf("-i\t\tInvert sort output data (from small to large).\n");
 	printf("-n\t\tSort by number of packets instead of transfered bytes.\n");
+	printf("-s\t\tSum up all traffic regardless the transport layer and create a shortel list.\n");
+	printf("\t\tThis is ignored on -g (grep).\n");
 	printf("-g\t\ttGrep (filter) for one or two IP addresses.\n");
 	printf("\t\tPatterns:\n");
 	printf("\t\tADDRESS\tCopy packets if source or destination address matches.\n");
@@ -270,7 +272,7 @@ void fprintaddr(FILE *wfd, struct ipaddr ip) {
 
 /* Print port number if grep pattern is given */
 void fprintport(FILE *wfd, uint16_t port, char set_type, char protocol) {
-	if ( set_type == 'b' ) return;
+	if ( set_type == 'b' || set_type == 's' ) return;
 	if ( protocol == 'o' ) fprintf(wfd, "\t-");
 	else fprintf(wfd, "\t%u", port);
 }
@@ -288,11 +290,42 @@ void fprintts(FILE *wfd, uint64_t ts, char format) {
 	fprintf(wfd, ".%06lu", ts & 0xffffffff);	// add microseconds
 }
 
+/* Print bytes */
+void fprintbytes(FILE *wfd, uint64_t sum, char format) {
+	if ( format == 'r' ) {	// print in human readable format
+		uint64_t tmp = sum / 1000000000000000;
+		if ( tmp > 9 ) fprintf(wfd, "\t%lu PB", tmp);
+		else {
+			tmp = sum / 1000000000000;
+			if ( tmp > 9 ) fprintf(wfd, "\t%lu TB", tmp);
+			else {
+				tmp = sum / 1000000000;
+				if ( tmp > 9 ) fprintf(wfd, "\t%lu GB", tmp);
+				else {
+					tmp = sum / 1000000;
+					if ( tmp > 9 ) fprintf(wfd, "\t%lu MB", tmp);
+					else {
+						tmp = sum / 1000;
+						if ( tmp > 9 ) fprintf(wfd, "\t%lu kB", tmp);
+						else fprintf(wfd, "%\tu B", sum);
+					}
+				}
+			}
+		}
+	} else  fprintf(wfd, "\t%lu", sum);
+}
+
 /* Print head line*/
 void fprinthead(FILE *wfd, char set_type) {
-	if ( set_type == 'b' ) fprintf(wfd, "SRC_ADDR\tDST_ADDR\tPROTOCOL");
-	else fprintf(wfd, "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tPROTOCOL");
-	fprintf(wfd, "\tFIRST_TS\tLAST_TS\tPACKETS\tVOLUME\n");
+	switch (set_type) {
+		case 'b': fprintf(wfd, "SRC_ADDR\tDST_ADDR"); break;
+		case 's': fprintf(wfd, "ADDR"); break;
+		default: fprintf(wfd, "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tPROTOCOL");
+	}
+	if (set_type != 's' ) fprintf(wfd, "\tPROTOCOL");
+	fprintf(wfd, "\tFIRST_TS\tLAST_TS");
+	if ( set_type == 's' ) fprintf(wfd, "\tPACKETS_IN\tPACKETS_OUT\tVOLUME_IN\tVOLUME_OUT\n");
+	else fprintf(wfd, "\tPACKETS\tVOLUME\n");
 }
 
 /* Structure for one statistical data set */
@@ -303,8 +336,9 @@ struct statset {
 	uint64_t first_seen, last_seen, cnt, sum;
 };
 
-/* Print one data set to string as one line*/
+/* Print statistical data set structure */
 void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
+	if ( set_type == 's' ) return;
 	fprintaddr(wfd, set.src_addr);
 	fprintport(wfd, set.src_port, set_type, set.protocol);
 	fprintf(wfd, "\t");
@@ -317,28 +351,27 @@ void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
 	}
 	fprintts(wfd, set.first_seen, format);
 	fprintts(wfd, set.last_seen, format);
-	fprintf(wfd, "\t%lu\t", set.cnt);
-	if ( format == 'r' ) {	// print in human readable format
-		uint64_t tmp = set.sum / 1000000000000000;
-		if ( tmp > 9 ) fprintf(wfd, "%lu PB\n", tmp);
-		else {
-			tmp = set.sum / 1000000000000;
-			if ( tmp > 9 ) fprintf(wfd, "%lu TB\n", tmp);
-			else {
-				tmp = set.sum / 1000000000;
-				if ( tmp > 9 ) fprintf(wfd, "%lu GB\n", tmp);
-				else {
-					tmp = set.sum / 1000000;
-					if ( tmp > 9 ) fprintf(wfd, "%lu MB\n", tmp);
-					else {
-						tmp = set.sum / 1000;
-						if ( tmp > 9 ) fprintf(wfd, "%lu kB\n", tmp);
-						else fprintf(wfd, "%lu B\n", set.sum);
-					}
-				}
-			}
-		}
-	} else  fprintf(wfd, "\t%lu\n", set.sum);
+	fprintf(wfd, "\t%lu", set.cnt);
+	fprintbytes(wfd, set.sum, format);
+	fprintf(wfd, "\n");
+}
+
+/* Structure for single address, number of packets and traffic volume */
+struct single {
+	struct ipaddr addr;
+	uint64_t first_seen, last_seen, cnt_in, cnt_out, cnt, sum_in, sum_out, sum;
+};
+
+/* Print single ip address structure */
+void fprintsingle(FILE *wfd, struct single set, char format) {
+	fprintaddr(wfd, set.addr);
+	fprintf(wfd, "\t");
+	fprintts(wfd, set.first_seen, format);
+	fprintts(wfd, set.last_seen, format);
+	fprintf(wfd, "\t%lu\t%lu", set.cnt_in, set.cnt_out);
+	fprintbytes(wfd, set.sum_in, format);
+	fprintbytes(wfd, set.sum_out, format);
+	fprintf(wfd, "\n");
 }
 
 /* Structure for pcap file header */
@@ -559,14 +592,15 @@ int main(int argc, char **argv) {
 	|| ( ( argv[1][0] == '-' ) && ( argv[1][1] == 'h' ) ) ) ) help(0);
 	else if ( argc < 2 ) help(1);	// also show help if no argument is given but return with exit(1)
 	char opt;	// command line options
-	char readable_format = ' ', col_head_line = ' ', sort_invert = ' ', sort_cnt = ' ';	// default options
+	char readable_format = ' ', col_head_line = ' ', sort_invert = ' ', sort_cnt = ' ', shorter = 'b';	// switches
 	char *gvalue = NULL, *wvalue = NULL;	// pointer to command line arguments
-	while ((opt = getopt(argc, argv, "rcing:w:")) != -1)	// command line arguments
+	while ((opt = getopt(argc, argv, "rcinsg:w:")) != -1)	// command line arguments
 		switch (opt) {
 			case 'r': readable_format = 'r'; break;	// human readable output format
 			case 'c': col_head_line = 'c'; break;	// show meanings of columns in a head line
 			case 'i': sort_invert = 'i'; break;	// human readable output format
-			case 'n': sort_cnt = 'n'; break;	// human readable output format
+			case 'n': sort_cnt = 'n'; break;	// sort by number of packets
+			case 's': shorter = 's'; break;	// shorter = sum tcp + udp + other
 			case 'g': gvalue = optarg; break;	// get grep argument
 			case 'w': wvalue = optarg; break;	// set output file
 			case '?':
@@ -582,8 +616,12 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 	struct gpattern grep;	// grep pattern
-	grep.type = 'b';	// defailt is no grep pattern = basic calculation
+	if ( shorter == 's' && gvalue != NULL ) {
+		fprintf(stderr, "Error: -s does not work with -g.\n");
+		exit(1);
+	}
 	if ( gvalue != NULL ) grep = getgrep(gvalue);	// option -g = grep
+	else grep.type = shorter;
 	FILE *wfd = stdout;	// destination file pointer
 	if ( wvalue != NULL ) {	// option -w
 		if ( access(wvalue, F_OK) != -1 ) {	// check for existing file
@@ -649,6 +687,15 @@ int main(int argc, char **argv) {
 		fprinthead(wfd, grep.type);
 	}
 	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
+		struct single *addresses;
+		uint64_t addr_cnt;
+		int addr_blk = 100;
+		addresses = malloc(sizeof(struct single)*addr_blk);	// allocate ram for the arrays to store data
+		for (uint64_t i=0; i<stats.cnt; i++) {
+			for (uint64_t j=0; j<addr_cnt; j++) {
+
+		}
+
 		uint64_t swapped;	// sort data sets
 		struct statset tmp;
 		if ( sort_cnt == 'n' ) {
@@ -706,9 +753,9 @@ int main(int argc, char **argv) {
 				} while ( swapped > 0 );
 			}
 		}
-		for (uint64_t i=0; i<stats.cnt; i++) {	// print list or write to file
-			fprintset(wfd, stats.array[i], grep.type, readable_format);
-		}
+		if ( grep.type == 's' ) for (uint64_t i=0; i<addr_cnt; i++)
+			fprintsingle(wfd, addresses[i], readable_format);
+		else for (uint64_t i=0; i<stats.cnt; i++) fprintset(wfd, stats.array[i], grep.type, readable_format);
 	}
 	free(stats.array);	// might be redundant before exit
 	if ( wfd != NULL ) fclose(wfd);	// close output file on -w
