@@ -1,4 +1,4 @@
-/* IPRUNNER v0.2-20201016 */
+/* IPRUNNER v0.2-20201017 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,13 +10,13 @@
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.1-20201014n\n");
+	printf("\nIPPRUNNER v0.1-20201017n\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
 	printf("Adresses, ports (on -g), oldest timestamp, youngest timestamp (first seen / last seen), the quantity\n");
 	printf("of packets and the sum of the packet volumes (as given in PCAP files as orig_len) are listed.\n\n");
-	printf("IPRUNNER might not work with all PCAP files. Ethernet link layer should work.\n\n");
+	printf("IPRUNNER might not work with all PCAP files. Ethernet link and null layer should work.\n\n");
 	printf("Usage:\n\n");
 	printf("iprunner [--help] [-h] [-r] [-c] [-i] [-n] [-g PATTERN] [-w CSV_OUTFILE] PCAP_INFILE1 [PCAP_INFILE2 ...]\n");
 	printf("\nInput file format ist PCAP. PCAPNG does not work.\n");
@@ -687,6 +687,23 @@ int main(int argc, char **argv) {
 		fprinthead(wfd, grep.type);
 	}
 	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
+		struct ipaddr addresses[stats.cnt];	// all unique ip addresses
+		uint64_t weights[stats.cnt];	// weight for the addresses to sort
+		uint64_t addr_cnt = 0;	// count ip addresses in
+			if ( sort_cnt == 'n' ) {
+				for (uint64_t i=0; i<stats.cnt; i++) {	// go through statistics
+
+					stats.array[i].src_addr
+					stats.array[i].dst_addr
+		
+							stats.array[i].cnt
+		
+		
+		
+		
+		
+		
+		}
 		struct single *addresses;
 		uint64_t addr_cnt;
 		int addr_blk = 100;
