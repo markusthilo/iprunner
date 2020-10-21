@@ -690,10 +690,14 @@ int main(int argc, char **argv) {
 		struct ipaddr addresses[stats.cnt];	// all unique ip addresses
 		uint64_t weights[stats.cnt];	// weight for the addresses to sort
 		uint64_t addr_cnt = 0;	// count ip addresses in
+		uint64_t i,j: 
 			if ( sort_cnt == 'n' ) {
 				for (uint64_t i=0; i<stats.cnt; i++) {	// go through statistics
-
-					stats.array[i].src_addr
+					
+					for (uint64_t j=0; j<addr_cnt; j++) {	// go through isolated ip addresses
+						if ( eqadd(stats.array[i].src_addr, addresses[j] == 0 ) {
+							weights[j] += stats.array[i].cnt;
+							
 					stats.array[i].dst_addr
 		
 							stats.array[i].cnt
