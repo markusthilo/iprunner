@@ -1,4 +1,4 @@
-/* IPRUNNER v0.2-20201017 */
+/* IPRUNNER v0.2-20201016 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,13 +10,13 @@
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.1-20201017n\n");
+	printf("\nIPPRUNNER v0.1-20201014n\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
 	printf("Adresses, ports (on -g), oldest timestamp, youngest timestamp (first seen / last seen), the quantity\n");
 	printf("of packets and the sum of the packet volumes (as given in PCAP files as orig_len) are listed.\n\n");
-	printf("IPRUNNER might not work with all PCAP files. Ethernet link and null layer should work.\n\n");
+	printf("IPRUNNER might not work with all PCAP files. Ethernet link layer should work.\n\n");
 	printf("Usage:\n\n");
 	printf("iprunner [--help] [-h] [-r] [-c] [-i] [-n] [-g PATTERN] [-w CSV_OUTFILE] PCAP_INFILE1 [PCAP_INFILE2 ...]\n");
 	printf("\nInput file format ist PCAP. PCAPNG does not work.\n");
@@ -27,7 +27,7 @@ void help(int r){
 	printf("\t\tThe time stamps are taken from the PCAP files without any validation or adjustment.\n\n");
 	printf("-i\t\tInvert sort output data (from small to large).\n");
 	printf("-n\t\tSort by number of packets instead of transfered bytes.\n");
-	printf("-s\t\tSum up all traffic regardless the transport layer and create a shortel list.\n");
+	printf("-s\t\tSum up all traffic regardless the transport layer and create a shorter list.\n");
 	printf("\t\tThis is ignored on -g (grep).\n");
 	printf("-g\t\ttGrep (filter) for one or two IP addresses.\n");
 	printf("\t\tPatterns:\n");
@@ -307,7 +307,7 @@ void fprintbytes(FILE *wfd, uint64_t sum, char format) {
 					else {
 						tmp = sum / 1000;
 						if ( tmp > 9 ) fprintf(wfd, "\t%lu kB", tmp);
-						else fprintf(wfd, "%\tu B", sum);
+						else fprintf(wfd, "\t%u B", sum);
 					}
 				}
 			}
@@ -353,24 +353,6 @@ void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
 	fprintts(wfd, set.last_seen, format);
 	fprintf(wfd, "\t%lu", set.cnt);
 	fprintbytes(wfd, set.sum, format);
-	fprintf(wfd, "\n");
-}
-
-/* Structure for single address, number of packets and traffic volume */
-struct single {
-	struct ipaddr addr;
-	uint64_t first_seen, last_seen, cnt_in, cnt_out, cnt, sum_in, sum_out, sum;
-};
-
-/* Print single ip address structure */
-void fprintsingle(FILE *wfd, struct single set, char format) {
-	fprintaddr(wfd, set.addr);
-	fprintf(wfd, "\t");
-	fprintts(wfd, set.first_seen, format);
-	fprintts(wfd, set.last_seen, format);
-	fprintf(wfd, "\t%lu\t%lu", set.cnt_in, set.cnt_out);
-	fprintbytes(wfd, set.sum_in, format);
-	fprintbytes(wfd, set.sum_out, format);
 	fprintf(wfd, "\n");
 }
 
@@ -585,6 +567,65 @@ void searchset(struct sarray *stats, struct packetdata packet, char set_type) {
 	appendset(stats, packet);	// no match -> append new data set to array
 }
 
+/* Structure for one single address with weight */
+struct single {
+	struct ipaddr addr;
+	uint64_t wght;
+};
+
+/* Check if address is in array of unique addresses and add weight */
+int chckuniq(struct single *uniq, uint64_t uniq_cnt, struct ipaddr addr, uint64_t weight) {
+	for (uint64_t i=0; i<uniq_cnt; i++) {
+		if ( eqaddr(addr, uniq[i].addr) == 1 ) {
+			uniq[i].wght += weight;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* Print one line for shorter output */
+void fprintshorter(FILE *wfd, struct sarray *stats, struct ipaddr addr, char format) {
+	fprintaddr(wfd, addr);
+	fprintf(wfd, "\t");
+	uint64_t cnt_in = 0, cnt_out = 0, sum_in = 0, sum_out = 0, first_seen = 0, last_seen = 0;
+	for (uint64_t i=0; i<stats->cnt; i++) {
+		if ( eqaddr(addr, stats->array[i].dst_addr) == 1 ) {
+			cnt_in += stats->array[i].cnt;
+			sum_in += stats->array[i].sum;
+		} else if ( eqaddr(addr, stats->array[i].src_addr) == 1 ) {
+			cnt_out += stats->array[i].cnt;
+			sum_out += stats->array[i].sum;
+		} else continue;
+		if ( first_seen > stats->array[i].first_seen || first_seen == 0 ) first_seen = stats->array[i].first_seen;
+		if ( last_seen < stats->array[i].last_seen || last_seen == 0 ) last_seen = stats->array[i].last_seen;
+	}
+	fprintts(wfd, first_seen, format);
+	fprintts(wfd, last_seen, format);
+	fprintf(wfd, "\t%lu\t%lu", cnt_in, cnt_out);
+	fprintbytes(wfd, sum_in, format);
+	fprintbytes(wfd, sum_out, format);
+	fprintf(wfd, "\n");
+}
+
+/* Structure for pairs of addresses */
+struct pair {
+	struct ipaddr addr1, addr2;
+	uint64_t wght;
+};
+
+/* Check if two addresses match source and destination and add weight */
+int chcklink(struct pair *links, uint64_t link_cnt, struct ipaddr addr1 , struct ipaddr addr2, uint64_t weight) {
+	for (uint64_t i=0; i<link_cnt; i++) {
+		if ( ( eqaddr(addr1, links[i].addr1) == 1 && eqaddr(addr2, links[i].addr2) == 1 )
+			|| ( eqaddr(addr1, links[i].addr2) == 1 && eqaddr(addr2, links[i].addr1) == 1 ) ) {
+			links[i].wght += weight;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* Main function - program starts here*/
 int main(int argc, char **argv) {
 	if ( ( argc > 1 )	// show help
@@ -687,98 +728,148 @@ int main(int argc, char **argv) {
 		fprinthead(wfd, grep.type);
 	}
 	if ( stats.cnt > 0 ) {	// without ip traffic nothing is to generate
-		struct ipaddr addresses[stats.cnt];	// all unique ip addresses
-		uint64_t weights[stats.cnt];	// weight for the addresses to sort
-		uint64_t addr_cnt = 0;	// count ip addresses in
-		uint64_t i,j: 
-			if ( sort_cnt == 'n' ) {
-				for (uint64_t i=0; i<stats.cnt; i++) {	// go through statistics
-					
-					for (uint64_t j=0; j<addr_cnt; j++) {	// go through isolated ip addresses
-						if ( eqadd(stats.array[i].src_addr, addresses[j] == 0 ) {
-							weights[j] += stats.array[i].cnt;
-							
-					stats.array[i].dst_addr
-		
-							stats.array[i].cnt
-		
-		
-		
-		
-		
-		
-		}
-		struct single *addresses;
-		uint64_t addr_cnt;
-		int addr_blk = 100;
-		addresses = malloc(sizeof(struct single)*addr_blk);	// allocate ram for the arrays to store data
-		for (uint64_t i=0; i<stats.cnt; i++) {
-			for (uint64_t j=0; j<addr_cnt; j++) {
-
-		}
-
-		uint64_t swapped;	// sort data sets
-		struct statset tmp;
-		if ( sort_cnt == 'n' ) {
-			if ( sort_invert == 'i' ) {
-				do {	// bubblesort cnt little to big
-					swapped = 0;
-					for (uint64_t i=1; i<stats.cnt; i++) {
-						if ( stats.array[i-1].cnt > stats.array[i].cnt ) {
-							tmp = stats.array[i-1];
-							stats.array[i-1] = stats.array[i];
-							stats.array[i] = tmp;
-							swapped++;
-						}
+		if ( shorter == 's' ) {
+			uint64_t max_addrs = stats.cnt << 1;
+			struct single uniq[max_addrs];	// array for uniq single ip addresses
+			memset(uniq, 0, sizeof(struct single)*max_addrs);	// start calculation with weight 0
+			uniq[0].addr = stats.array[0].src_addr;	// initialize with first source address
+			uniq[1].addr = stats.array[0].dst_addr;	// and destination address
+			uint64_t uniq_cnt = 2;
+			int match; 	// to check if address was found
+			if ( sort_cnt == 'n' ) {	// calculate weight by number of packets
+				uniq[0].wght = stats.array[0].cnt;
+				uniq[1].wght = stats.array[0].cnt;
+				for (uint64_t i=1; i<stats.cnt; i++) {	// go through statistics
+					if ( chckuniq(uniq, uniq_cnt, stats.array[i].src_addr, stats.array[i].cnt) == 0 ) {
+						uniq[uniq_cnt].addr = stats.array[i].src_addr;	// append to uniq if source address is not already in
+						uniq[uniq_cnt++].wght += stats.array[i].cnt;
 					}
-				} while ( swapped > 0 );
-			
-			} else {
-				do {	// bubblesort cnt big to little
-					swapped = 0;
-					for (uint64_t i=1; i<stats.cnt; i++) {
-						if ( stats.array[i-1].cnt < stats.array[i].cnt ) {
-							tmp = stats.array[i-1];
-							stats.array[i-1] = stats.array[i];
-							stats.array[i] = tmp;
-							swapped++;
-						}
+					if ( chckuniq(uniq, uniq_cnt, stats.array[i].dst_addr, stats.array[i].cnt) == 0 ) {
+						uniq[uniq_cnt].addr = stats.array[i].dst_addr;	// append to uniq if destination address is not already in
+						uniq[uniq_cnt++].wght += stats.array[i].cnt;
 					}
-				} while ( swapped > 0 );
+				}
+			} else {	// calculate weight by transfered bytes
+				uniq[0].wght = stats.array[0].sum;
+				uniq[1].wght = stats.array[0].sum;
+				for (uint64_t i=1; i<stats.cnt; i++) {	// go through statistics
+					if ( chckuniq(uniq, uniq_cnt, stats.array[i].src_addr, stats.array[i].sum) == 0 ) {
+						uniq[uniq_cnt].addr = stats.array[i].src_addr;	// append to uniq if source address is not already in
+						uniq[uniq_cnt++].wght += stats.array[i].sum;
+					}
+					if ( chckuniq(uniq, uniq_cnt, stats.array[i].dst_addr, stats.array[i].sum) == 0 ) {
+						uniq[uniq_cnt].addr = stats.array[i].dst_addr;	// append to uniq if destination address is not already in
+						uniq[uniq_cnt++].wght += stats.array[i].sum;
+					}
+				}
 			}
-		} else {
-			if ( sort_invert == 'i' ) {
-				do {	// bubblesort sum little to big
-					swapped = 0;
-					for (uint64_t i=1; i<stats.cnt; i++) {
-						if ( stats.array[i-1].sum > stats.array[i].sum ) {
-							tmp = stats.array[i-1];
-							stats.array[i-1] = stats.array[i];
-							stats.array[i] = tmp;
-							swapped++;
-						}
+			struct single stmp;	// to swap positions
+			int swapped;	// to check if positions were swapped
+			do {	// bubblesort weight big to little
+				swapped = 0;
+				for (uint64_t i=1; i<uniq_cnt; i++) {
+					if ( uniq[i-1].wght < uniq[i].wght ) {
+						stmp = uniq[i-1];
+						uniq[i-1] = uniq[i];
+						uniq[i] = stmp;
 					}
-				} while ( swapped > 0 );
-			
-			} else {
-				do {	// bubblesort sum big to little
-					swapped = 0;
-					for (uint64_t i=1; i<stats.cnt; i++) {
-						if ( stats.array[i-1].sum < stats.array[i].sum ) {
-							tmp = stats.array[i-1];
-							stats.array[i-1] = stats.array[i];
-							stats.array[i] = tmp;
-							swapped++;
-						}
+				}
+			} while ( swapped == 1 );
+			if ( sort_invert == 'i' )
+				for (uint64_t i=uniq_cnt; i>0; --i) fprintshorter(wfd, &stats, uniq[i].addr, readable_format);
+			else
+				for (uint64_t i=0; i<uniq_cnt; i++) fprintshorter(wfd, &stats, uniq[i].addr, readable_format);
+			free(stats.array);	// might be redundant short before exit
+		} else {	// normal output (not -s)
+			struct pair links[stats.cnt];	// array for the paired addresses
+			memset(links, 0, sizeof(struct pair)*stats.cnt);	// start calculation with weight 0
+			links[0].addr1 = stats.array[0].src_addr;	// initialize with first source address
+			links[0].addr2 = stats.array[0].dst_addr;	// and destination address
+			uint64_t links_cnt = 1;
+			int match; 	// to check if address was found
+			if ( sort_cnt == 'n' ) {	// calculate weight by number of packets
+				links[0].wght = stats.array[0].cnt;
+				for (uint64_t i=1; i<stats.cnt; i++) {	// go through statistics
+					if ( chcklink(links, links_cnt, stats.array[i].src_addr, stats.array[i].dst_addr, stats.array[i].cnt) == 0 ) {
+						links[links_cnt].addr1 = stats.array[i].src_addr;	// append to uniq if source address is not already in
+						links[links_cnt].addr2 = stats.array[i].dst_addr;
+						links[links_cnt++].wght += stats.array[i].cnt;
 					}
-				} while ( swapped > 0 );
+				}
+			} else {	// calculate weight by transfered bytes
+				links[0].wght = stats.array[0].sum;
+				for (uint64_t i=1; i<stats.cnt; i++) {	// go through statistics
+					if ( chcklink(links, links_cnt, stats.array[i].src_addr, stats.array[i].dst_addr, stats.array[i].sum) == 0 ) {
+						links[links_cnt].addr1 = stats.array[i].src_addr;	// append to uniq if source address is not already in
+						links[links_cnt].addr2 = stats.array[i].dst_addr;
+						links[links_cnt++].wght += stats.array[i].sum;
+					}
+				}
 			}
+			struct pair ptmp;	// to swap positions
+			int swapped;	// to check if positions were swapped
+			do {	// bubblesort weight big to little
+				swapped = 0;
+				for (uint64_t i=1; i<links_cnt; i++) {
+					if ( links[i-1].wght < links[i].wght ) {
+						ptmp = links[i-1];
+						links[i-1] = links[i];
+						links[i] = ptmp;
+						swapped = 1;
+					}
+				}
+			} while ( swapped == 1 );
+			struct statset sorted[stats.cnt];	// to store the sorted datasets
+			uint64_t sorted_cnt = 0;
+			struct statset block[6];	// array for one block of linked addresses
+			uint64_t block_cnt;
+			struct statset tmp;
+			for (uint64_t i=0; i<links_cnt; i++) {
+				block_cnt = 0;
+				for (uint64_t j=0; j<stats.cnt; j++) {
+					if ( ( eqaddr(links[i].addr1, stats.array[j].src_addr) == 1 
+							&& eqaddr(links[i].addr2, stats.array[j].dst_addr) == 1 )
+						|| eqaddr(links[i].addr1, stats.array[j].dst_addr) == 1 
+							&& eqaddr(links[i].addr2, stats.array[j].src_addr) == 1 ) {
+						block[block_cnt++] = stats.array[j];
+						if ( block_cnt == 6 ) break;
+					}
+				}
+				if ( block_cnt == 0 ) continue;
+				if ( sort_cnt == 'n' ) {	// sort by number of packets
+					do {	// bubblesort big to little
+						swapped = 0;
+						for (uint64_t j=1; j<block_cnt; j++) {
+							if ( block[j-1].cnt < block[j].cnt ) {
+								tmp = block[j-1];
+								block[j-1] = block[j];
+								block[j] = tmp;
+								swapped = 1;
+							}
+						}
+					} while ( swapped == 1 );
+				} else {	// sort by bytes
+					do {	// bubblesort big to little
+						swapped = 0;
+						for (uint64_t j=1; j<block_cnt; j++) {
+							if ( block[j-1].sum < block[j].sum ) {
+								tmp = block[j-1];
+								block[j-1] = block[j];
+								block[j] = tmp;
+								swapped = 1;
+							}
+						}
+					} while ( swapped == 1 );
+				}
+				for (uint64_t j=0; j<block_cnt; j++) sorted[sorted_cnt++] = block[j];
+			}
+			free(stats.array);
+			if ( sort_invert == 'i' )
+				for (uint64_t i=sorted_cnt; i>0; --i) fprintset(wfd, sorted[i], grep.type, readable_format);
+			else
+				for (uint64_t i=0; i<sorted_cnt; i++) fprintset(wfd, sorted[i], grep.type, readable_format);
 		}
-		if ( grep.type == 's' ) for (uint64_t i=0; i<addr_cnt; i++)
-			fprintsingle(wfd, addresses[i], readable_format);
-		else for (uint64_t i=0; i<stats.cnt; i++) fprintset(wfd, stats.array[i], grep.type, readable_format);
-	}
-	free(stats.array);	// might be redundant before exit
+	} else free(stats.array);	// might be redundant before exit
 	if ( wfd != NULL ) fclose(wfd);	// close output file on -w
 	exit(0);
 }
