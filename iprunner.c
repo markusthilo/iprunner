@@ -1,4 +1,4 @@
-/* IPRUNNER v0.2-20201016 */
+/* IPRUNNER v0.2-20201027 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,7 +10,7 @@
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.1-20201014n\n");
+	printf("\nIPPRUNNER v0.1-20201027n\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
@@ -359,149 +359,129 @@ void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
 /* Structure for pcap file header */
 struct pcapheader {
 	uint32_t magic_number, network;
-	int error;
 };
 
 /* Read pcap file header */
-struct pcapheader readpcapheader(FILE *fd) {
-	struct pcapheader header;
+int readpcapheader(FILE *fd, struct pcapheader *header) {
 	uint8_t b[24];
-	header.error = -1;	// go to next pcap file
-	if ( fread(&b, 24, 1, fd) != 1 ) return header;
-	header.magic_number = readuint32(b, 0);
-	if ( header.magic_number != 0xa1b2c3d4 && header.magic_number != 0xd4c3b2a1 ) {	// check for pcap file type
-		header.error = 2;
-		return header;
-	}
-	if ( header.magic_number == 0xa1b2c3d4 ) header.network = readuint32(b, 20);
-	else header.network = readuint32swapped(b, 20);
-
-	if ( header.network > 1 ) {	// check for pcap file type
-		header.error = 3;
-		return header;
-	}
-	header.error = 0;
-	return header;
+	if ( fread(&b, 24, 1, fd) != 1 ) return 1;
+	header->magic_number = readuint32(b, 0);
+	if ( header->magic_number != 0xa1b2c3d4 && header->magic_number != 0xd4c3b2a1 ) return 2;
+	if ( header->magic_number == 0xa1b2c3d4 ) header->network = readuint32(b, 20);
+	else header->network = readuint32swapped(b, 20);
+	if ( header->network > 1 ) return 3;	// check for pcap file type
+	return 0;
 }
 
 /* Structure for one packet in pcap file*/
 struct packetdata {
 	uint64_t ts;
 	uint32_t incl_len, orig_len, seek2next;
+	int ipv;
 	char protocol;
 	struct ipaddr src_addr, dst_addr;
 	uint16_t src_port, dst_port;
-	int ipv, error;
 };
 
+/* DEBUGGING: print struct packetdata */
+void printpacketdata(uint n, struct packetdata p) {
+	printf("DEBUG: READING\t%d", n);
+	fprintts(stdout, p.ts, ' ');
+	printf("\t");
+	fprintaddr(stdout, p.src_addr);
+	fprintport(stdout, p.src_port, ' ', ' ');
+	printf("\t");
+	fprintaddr(stdout, p.dst_addr);
+	fprintport(stdout, p.dst_port, ' ', ' ');
+	printf("\t(incl_len=%d, orig_len=%d, seek2next=%d, protocol=%c, ipv=%d)\n",
+		p.incl_len, p.orig_len, p.seek2next, p.protocol, p.ipv);
+}
+
 /* Read packet header */
-struct packetdata readframe(FILE *fd, uint32_t magic_number) {
-	struct packetdata packet;
+int readframe(FILE *fd, struct packetdata *packet, struct pcapheader pcap) {
 	uint8_t b[16];
-	packet.error = 1;
-	if (fread(&b, 16, 1, fd) != 1) return packet;	// read packet header from pcap file
-	if ( magic_number == 0xa1b2c3d4 ) {	// normal byte order
-		packet.ts = readuint64(b, 0);
-		packet.incl_len = readuint32(b, 8);
-		packet.orig_len = readuint32(b, 4);
+	if (fread(&b, 16, 1, fd) != 1) return 1;	// read packet header from pcap file
+	if ( pcap.magic_number == 0xa1b2c3d4 ) {	// normal byte order
+		packet->ts = readuint64(b, 0);
+		packet->incl_len = readuint32(b, 8);
+		packet->orig_len = readuint32(b, 4);
 	} else {	// swapped byte order
-		packet.ts = ( (uint64_t) readuint32swapped(b, 0) << 32 )
+		packet->ts = ( (uint64_t) readuint32swapped(b, 0) << 32 )
 			| ( (uint64_t) readuint32swapped(b, 4) & 0xffffffff );
-		packet.incl_len = readuint32swapped(b, 8);
-		packet.orig_len = readuint32swapped(b, 12);
+		packet->incl_len = readuint32swapped(b, 8);
+		packet->orig_len = readuint32swapped(b, 12);
 	}
-	packet.seek2next = packet.incl_len;
-	packet.error = 0;	// no errors
-	return packet;
+	packet->seek2next = packet->incl_len;
+	return 0;
 }
 
 /* Read null or data link layer */
-struct packetdata readlayer2(FILE *fd, struct packetdata packet, uint32_t network) {
-	packet.error = 1;	//	1 means something went wrong
-	packet.ipv = 0;
+int readlayer2(FILE *fd, struct packetdata *packet, struct pcapheader pcap) {
 	uint8_t b[14];
-	switch (network) {	// data link type
+	switch (pcap.network) {	// data link type
 		case 0:	// null
-			if (fread(&b, 4, 1, fd) != 1) return packet;	// family and version
-			packet.error = 0;
-			packet.seek2next -= 4;
+			if (fread(&b, 4, 1, fd) != 1) return 1;	// family and version
+			packet->seek2next -= 4;
 			uint32_t family = readuint32(b, 0);
 			switch (family) {
-				case 0x2000000: packet.ipv = 4; break;	// ipv4
-				case 0x1800000: packet.ipv = 6;	// ipv6
+				case 0x2000000: packet->ipv = 4; return 0;	// ipv4
+				case 0x1800000: packet->ipv = 6; return 0;	// ipv6
+				default: packet->ipv = 0; return 0;
 			}
-			break;
 		case 1:	// ethernet
-			if (fread(&b, 14, 1, fd) != 1) return packet;	// ethernet layer
-			packet.error = 0;
-			packet.seek2next -= 14;
+			if (fread(&b, 14, 1, fd) != 1) return 1;	// ethernet layer
+			packet->seek2next -= 14;
 			uint16_t type = readuint16(b, 12);	// get type
 			switch (type) {
-				case 0x0800: packet.ipv = 4; break;	// ipv4
-				case 0x86dd: packet.ipv = 6;	// ipv6
+				case 0x0800: packet->ipv = 4; return 0;	// ipv4
+				case 0x86dd: packet->ipv = 6; return 0;	// ipv6
+				default: packet->ipv = 0; return 0;
 			}
 	}
-	return packet;
+	return 1;
 }
 
 /* Read IP layer */
-struct packetdata readlayer3(FILE *fd, struct packetdata packet) {
-	packet.error = 1;
+int readlayer3(FILE *fd, struct packetdata *packet) {
 	uint8_t b[40], protocol;
-	switch (packet.ipv) {
+	switch (packet->ipv) {
 		case 4:	// ipv4
-			if ( fread(&b, 20, 1, fd) != 1 ) return packet;	// read ip layer
-			packet.seek2next -= 20;	// to jump to next packet in pcap file later
-			if ( b[0] == 0x45 ) {	// ipv4 with header length 20
-				protocol = b[9];	// ip.proto
-				packet.src_addr = readipv4(b, 12);	// read source address
-				packet.dst_addr = readipv4(b, 16);	// read destination address
+			if ( fread(&b, 20, 1, fd) != 1 ) return 1;	// read ip layer
+			packet->seek2next -= 20;	// to jump to next packet in pcap file later
+			protocol = b[9];	// ip.proto
+			packet->src_addr = readipv4(b, 12);	// read source address
+			packet->dst_addr = readipv4(b, 16);	// read destination address
+			if ( b[0] > 0x45 ) {	// ipv4 with header length >20
+				uint32_t pdelta = ( ( b[0] & 0xf ) << 2 ) - 20;	// bytes left in ipv4 header
+				if ( fseek(fd, pdelta, SEEK_CUR) != 0 ) return 1;	// skip rest of ipv4 header
+				packet->seek2next -= pdelta;
 			}
 			break;
 		case 6:	// ipv6
-			if ( fread(&b, 40, 1, fd) != 1 ) return packet;	// read ip layer
-			packet.seek2next -= 40;
-			protocol = b[6];	// iv6.next
-			packet.src_addr = readipv6(b, 8);	// read source address
-			packet.dst_addr = readipv6(b, 24);	// read destination address
-			break;
+			if ( fread(&b, 40, 1, fd) != 1 ) return 1;	// read ip layer
+			packet->seek2next -= 40;
+			protocol = b[6];	// ipv6.next
+			packet->src_addr = readipv6(b, 8);	// read source address
+			packet->dst_addr = readipv6(b, 24);	// read destination address
 	}
 	switch (protocol) {
-		case 0x06: packet.protocol = 't'; break;
-		case 0x11: packet.protocol = 'u'; break;
-		default: packet.protocol = 'o';
+		case 0x06: packet->protocol = 't'; return 0;
+		case 0x11: packet->protocol = 'u'; return 0;
+		default: packet->protocol = 'o'; return 0;
 	}
-	packet.error = 0;
-	return packet;
+	return 1;
 }
 
 /* Read transport layer */
-struct packetdata readlayer4(FILE *fd, struct packetdata packet) {
-	packet.error = 1;	
-	if ( packet.protocol != 'o' ) {	// TCP or UDP
+int readlayer4(FILE *fd, struct packetdata *packet) {	
+	if ( packet->protocol != 'o' ) {	// TCP or UDP
 		uint8_t b[4];
-		if (fread(&b, 4, 1, fd) != 1) return packet;	// read ip layer
-		packet.seek2next -= 4;		
-		packet.src_port = readuint16(b, 0);	// read source port
-		packet.dst_port = readuint16(b, 2);	// read destination port
+		if (fread(&b, 4, 1, fd) != 1) return 1;	// read ip layer
+		packet->seek2next -= 4;		
+		packet->src_port = readuint16(b, 0);	// read source port
+		packet->dst_port = readuint16(b, 2);	// read destination port
 	}
-	packet.error = 0;
-	return packet;
-}
-
-/* Read packet from pcap file */
-struct packetdata readpacket(FILE *fd, struct pcapheader pcap) {
-	struct packetdata packet = readframe(fd, pcap.magic_number);
-	if ( packet.error != 0 ) return packet;
-	packet = readlayer2(fd, packet, pcap.network);	
-	if ( packet.error != 0 || packet.ipv == 0 ) return packet;
-	packet = readlayer3(fd, packet);	
-	if ( packet.error != 0 || packet.protocol == 'o' ) return packet;
-	packet = readlayer4(fd, packet);
-	if ( packet.error != 0 ) return packet;
-	if ( fseek(fd, packet.seek2next, SEEK_CUR) != 0 ) packet.error = -1;	// go to next pcap file
-	else packet.error = 0;
-	return packet;	// all done in the packet
+	return 0;
 }
 
 /* Structure for array to store statistics */
@@ -635,8 +615,10 @@ int main(int argc, char **argv) {
 	char opt;	// command line options
 	char readable_format = ' ', col_head_line = ' ', sort_invert = ' ', sort_cnt = ' ', shorter = 'b';	// switches
 	char *gvalue = NULL, *wvalue = NULL;	// pointer to command line arguments
-	while ((opt = getopt(argc, argv, "rcinsg:w:")) != -1)	// command line arguments
+	uint debug = 0;	// to count in packets for debug
+	while ((opt = getopt(argc, argv, "Drcinsg:w:")) != -1)	// command line arguments
 		switch (opt) {
+			case 'D': debug = 1; break;	// debug mode
 			case 'r': readable_format = 'r'; break;	// human readable output format
 			case 'c': col_head_line = 'c'; break;	// show meanings of columns in a head line
 			case 'i': sort_invert = 'i'; break;	// human readable output format
@@ -658,7 +640,7 @@ int main(int argc, char **argv) {
 	}
 	struct gpattern grep;	// grep pattern
 	if ( shorter == 's' && gvalue != NULL ) {
-		fprintf(stderr, "Error: -s does not work with -g.\n");
+		fprintf(stderr, "Error: -s (shorter list) does not work with -g (grep).\n");
 		exit(1);
 	}
 	if ( gvalue != NULL ) grep = getgrep(gvalue);	// option -g = grep
@@ -685,44 +667,59 @@ int main(int argc, char **argv) {
 	FILE *fd = NULL;	// pcap file pointer
 	uint8_t filetype[8];	// to get file type / magic number
 	struct packetdata packet;	// packet from pcap file
-	int readerror;	// to get read error
 	for (int i = optind; i < argc; i++) {	// go throught the input pcap files
 		fd = fopen(argv[i], "rb");	// open input pcap file
 		if ( fd == NULL ) {
 			fprintf(stderr, "Error: could not open file %s.\n", argv[i]);
 			exit(1);
 		}
-		pcap = readpcapheader(fd);	// read pcap file header
-		switch (pcap.error) {
+		switch ( readpcapheader(fd, &pcap) ) {	// read pcap file header
 			case 1 : fprintf(stderr, "Error: could not read file header: %s.\n", argv[i]); exit(1);
 			case 2 : fprintf(stderr, "Error: wrong file type: %s.\n", argv[i]); exit(1);
 			case 3 : fprintf(stderr, "Error: wrong link-layer: %s\n", argv[i]); exit(1);
 		}
 		do {	// loop through packets (endless until skipping by return)
-			packet = readpacket(fd, pcap);	// read one packet from pcap file
-			if ( packet.error > 0 ) break;	// end of file might be reached
-			if ( packet.error == 1 ) {
-				fprintf(stderr, "Error while reading from file %s.\n", argv[i]);
+			if ( readframe(fd, &packet, pcap) != 0 ) break;	// end of pcap file?
+			if ( readlayer2(fd, &packet, pcap) != 0 ) {
+				fprintf(stderr, "Error while reading packet data from file %s.\n", argv[i]);
 				exit(1);
 			}
-			if ( packet.ipv == 0 ) continue;	// do not count and go to next packet - no ip packet
-			switch (grep.type) {	// calculation depends on grep method (or none)
-				case 't':
-					if ( ( eqaddr(packet.src_addr, grep.ip1) == 1 )	// src or dst address is target?
-						|| ( eqaddr(packet.dst_addr, grep.ip1) == 1 )	
-					) searchset(&stats, packet, 't');
-					break;
-				case 'l':
-					if ( ( eqaddr(packet.src_addr, grep.ip1) == 1
-							&& eqaddr(packet.dst_addr, grep.ip2) == 1 )	// if src is target1 and dst is target2
-						|| ( eqaddr(packet.src_addr, grep.ip2) == 1
-							&& eqaddr(packet.dst_addr, grep.ip1) == 1 )	// or src ist target2 and dst is target1
-					) searchset(&stats, packet, 'l');
-					break;
-				default: searchset(&stats, packet, 'b');
+			if ( packet.ipv != 0 ) {
+				if ( readlayer3(fd, &packet) != 0 )	{
+					fprintf(stderr, "Error while reading a layer 3 from file %s.\n", argv[i]);
+					exit(1);
+				}
+				if ( packet.protocol != 'o' ) {
+					if ( readlayer4(fd, &packet) != 0 ) {
+						fprintf(stderr, "Error while reading a layer 4 from file %s.\n", argv[i]);
+						exit(1);
+					}
+				}
 			}
-		} while ( packet.error == 0 );	// until end of pcap file
+			if ( packet.ipv != 0 ) {	// extract infos from ip packet
+				switch (grep.type) {	// calculation depends on grep method (or none)
+					case 't':
+						if ( ( eqaddr(packet.src_addr, grep.ip1) == 1 )	// src or dst address is target?
+							|| ( eqaddr(packet.dst_addr, grep.ip1) == 1 )	
+						) searchset(&stats, packet, 't');
+						break;
+					case 'l':
+						if ( ( eqaddr(packet.src_addr, grep.ip1) == 1
+								&& eqaddr(packet.dst_addr, grep.ip2) == 1 )	// if src is target1 and dst is target2
+							|| ( eqaddr(packet.src_addr, grep.ip2) == 1
+								&& eqaddr(packet.dst_addr, grep.ip1) == 1 )	// or src ist target2 and dst is target1
+						) searchset(&stats, packet, 'l');
+						break;
+					default: searchset(&stats, packet, 'b');
+				}
+			}
+			if ( debug > 0 ) printpacketdata(debug++, packet);	/* debug */
+		} while ( fseek(fd, packet.seek2next, SEEK_CUR) == 0 );	// until end of pcap file
 		fclose(fd);	// close pcap file
+	}
+	if ( debug > 0 ) for (uint64_t i=0; i<stats.cnt; i++) {
+		printf("DEBUG: CALCULATING\t");
+		fprintset(stdout, stats.array[i], grep.type, readable_format);
 	}
 	if ( col_head_line == 'c' ) {	// option -c
 		fprinthead(wfd, grep.type);
@@ -772,11 +769,12 @@ int main(int argc, char **argv) {
 						stmp = uniq[i-1];
 						uniq[i-1] = uniq[i];
 						uniq[i] = stmp;
+						swapped = 1;
 					}
 				}
 			} while ( swapped == 1 );
 			if ( sort_invert == 'i' )
-				for (uint64_t i=uniq_cnt; i>0; --i) fprintshorter(wfd, &stats, uniq[i].addr, readable_format);
+				for (uint64_t i=uniq_cnt-1; i>0; i--) fprintshorter(wfd, &stats, uniq[i].addr, readable_format);
 			else
 				for (uint64_t i=0; i<uniq_cnt; i++) fprintshorter(wfd, &stats, uniq[i].addr, readable_format);
 			free(stats.array);	// might be redundant short before exit
@@ -819,6 +817,13 @@ int main(int argc, char **argv) {
 					}
 				}
 			} while ( swapped == 1 );
+			if ( debug > 0 ) for (uint64_t i=0; i<links_cnt; i++) {
+				printf("DEBUG: SORTING\t");
+				fprintaddr(stdout, links[i].addr1);
+				printf("\t");
+				fprintaddr(stdout, links[i].addr2);
+				printf("\t%d\n", links[i].wght);
+			}
 			struct statset sorted[stats.cnt];	// to store the sorted datasets
 			uint64_t sorted_cnt = 0;
 			struct statset block[6];	// array for one block of linked addresses
@@ -837,7 +842,7 @@ int main(int argc, char **argv) {
 				}
 				if ( block_cnt == 0 ) continue;
 				if ( sort_cnt == 'n' ) {	// sort by number of packets
-					do {	// bubblesort big to little
+					do {
 						swapped = 0;
 						for (uint64_t j=1; j<block_cnt; j++) {
 							if ( block[j-1].cnt < block[j].cnt ) {
@@ -849,7 +854,7 @@ int main(int argc, char **argv) {
 						}
 					} while ( swapped == 1 );
 				} else {	// sort by bytes
-					do {	// bubblesort big to little
+					do {
 						swapped = 0;
 						for (uint64_t j=1; j<block_cnt; j++) {
 							if ( block[j-1].sum < block[j].sum ) {
@@ -865,7 +870,7 @@ int main(int argc, char **argv) {
 			}
 			free(stats.array);
 			if ( sort_invert == 'i' )
-				for (uint64_t i=sorted_cnt; i>0; --i) fprintset(wfd, sorted[i], grep.type, readable_format);
+				for (uint64_t i=sorted_cnt-1; i>0; i--) fprintset(wfd, sorted[i], grep.type, readable_format);
 			else
 				for (uint64_t i=0; i<sorted_cnt; i++) fprintset(wfd, sorted[i], grep.type, readable_format);
 		}
