@@ -1,4 +1,4 @@
-/* IPRUNNER v0.3-20201126 */
+/* IPRUNNER v0.4-20201211 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -6,10 +6,11 @@
 #include <time.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <inttypes.h>
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.3-20201126n\n");
+	printf("\nIPPRUNNER v0.3-20201211\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
@@ -249,14 +250,15 @@ struct gpattern getgrep(char *string) {
 /* Print address */
 void fprintaddr(FILE *wfd, struct ipaddr ip) {
 	if ( ipversion(ip) == 4 )	/* ip v4 */
-		fprintf(wfd, "%ju.%ju.%ju.%ju",
+		fprintf(wfd, "%" PRIu64 ".%" PRIu64 ".%" PRIu64 ".%" PRIu64,
 			( ip.addr[1] >> 24 ) & 0xff,
 			( ip.addr[1] >> 16 ) & 0xff,
 			( ip.addr[1] >> 8 ) & 0xff,
 			ip.addr[1] & 0xff
 		);
 	else {	/* ip v6 */
-		fprintf(wfd, "%jx:%jx:%jx:%jx:%jx:%jx:%jx:%jx",
+		fprintf(wfd, "%" PRIx64 ":%" PRIx64 ":%" PRIx64 ":%" PRIx64
+			":%" PRIx64 ":%" PRIx64 ":%" PRIx64 ":%" PRIx64,
 			( ip.addr[0] >> 48 ) & 0xffff,
 			( ip.addr[0] >> 32 ) & 0xffff,
 			( ip.addr[0] >> 16 ) & 0xffff,
@@ -273,7 +275,7 @@ void fprintaddr(FILE *wfd, struct ipaddr ip) {
 void fprintport(FILE *wfd, uint16_t port, char set_type, char protocol) {
 	if ( set_type == 'b' || set_type == 's' ) return;
 	if ( protocol == 'o' ) fprintf(wfd, "\t-");
-	else fprintf(wfd, "\t%ju", port);
+	else fprintf(wfd, "\t%" PRIu16 "", port);
 }
 
 /* Print timestamp regardless timezone - just as it is stored in the PCAP file */
@@ -285,33 +287,33 @@ void fprintts(FILE *wfd, uint64_t ts, char format) {
 		char ts_str[32];
 		strftime(ts_str, 20, "%Y-%m-%d %X", localtime(&ts_sec));
 		fprintf(wfd, "\t%s", ts_str);
-	} else fprintf(wfd, "\t%ju", ts >> 32);	// seconds since 1970
-	fprintf(wfd, ".%06ju", ts & 0xffffffff);	// add microseconds
+	} else fprintf(wfd, "\t%" PRIu64 "", ts >> 32);	// seconds since 1970
+	fprintf(wfd, ".%06" PRIu64, ts & 0xffffffff);	// add microseconds
 }
 
 /* Print bytes */
 void fprintbytes(FILE *wfd, uint64_t sum, char format) {
 	if ( format == 'r' ) {	// print in human readable format
 		uint64_t tmp = sum / 1000000000000000;
-		if ( tmp > 9 ) fprintf(wfd, "\t%ju PB", tmp);
+		if ( tmp > 9 ) fprintf(wfd, "\t%" PRIu64 " PB", tmp);
 		else {
 			tmp = sum / 1000000000000;
-			if ( tmp > 9 ) fprintf(wfd, "\t%ju TB", tmp);
+			if ( tmp > 9 ) fprintf(wfd, "\t%" PRIu64 " TB", tmp);
 			else {
 				tmp = sum / 1000000000;
-				if ( tmp > 9 ) fprintf(wfd, "\t%ju GB", tmp);
+				if ( tmp > 9 ) fprintf(wfd, "\t%" PRIu64 " GB", tmp);
 				else {
 					tmp = sum / 1000000;
-					if ( tmp > 9 ) fprintf(wfd, "\t%ju MB", tmp);
+					if ( tmp > 9 ) fprintf(wfd, "\t%" PRIu64 " MB", tmp);
 					else {
 						tmp = sum / 1000;
-						if ( tmp > 9 ) fprintf(wfd, "\t%ju kB", tmp);
-						else fprintf(wfd, "\t%ju B", sum);
+						if ( tmp > 9 ) fprintf(wfd, "\t%" PRIu64 " kB", tmp);
+						else fprintf(wfd, "\t%" PRIu64 " B", sum);
 					}
 				}
 			}
 		}
-	} else  fprintf(wfd, "\t%ju", sum);
+	} else  fprintf(wfd, "\t%" PRIu64 "", sum);
 }
 
 /* Print head line*/
@@ -350,7 +352,7 @@ void fprintset(FILE *wfd, struct statset set, char set_type, char format) {
 	}
 	fprintts(wfd, set.first_seen, format);
 	fprintts(wfd, set.last_seen, format);
-	fprintf(wfd, "\t%ju", set.cnt);
+	fprintf(wfd, "\t%" PRIu64 "", set.cnt);
 	fprintbytes(wfd, set.sum, format);
 	fprintf(wfd, "\n");
 }
@@ -383,8 +385,8 @@ struct packetdata {
 };
 
 /* DEBUGGING: print struct packetdata */
-void printpacketdata(uint n, struct packetdata p) {
-	printf("DEBUG: READING\t%u", n);
+void printpacketdata(uint64_t n, struct packetdata p) {
+	printf("DEBUG: READING\t%" PRIu64, n);
 	fprintts(stdout, p.ts, ' ');
 	printf("\t");
 	fprintaddr(stdout, p.src_addr);
@@ -392,7 +394,8 @@ void printpacketdata(uint n, struct packetdata p) {
 	printf("\t");
 	fprintaddr(stdout, p.dst_addr);
 	fprintport(stdout, p.dst_port, ' ', ' ');
-	printf("\t(incl_len=%ju, orig_len=%ju, seek2next=%ju, protocol=%c, ipv=%d)\n",
+	printf("\t(incl_len=%" PRIu32 ", orig_len=%" PRIu32 ", seek2next=%" PRIu32
+		", protocol=%c, ipv=%d)\n",
 		p.incl_len, p.orig_len, p.seek2next, p.protocol, p.ipv);
 }
 
@@ -581,7 +584,7 @@ void fprintshorter(FILE *wfd, struct sarray *stats, struct ipaddr addr, char for
 	}
 	fprintts(wfd, first_seen, format);
 	fprintts(wfd, last_seen, format);
-	fprintf(wfd, "\t%ju\t%ju", cnt_in, cnt_out);
+	fprintf(wfd, "\t%" PRIu64 "\t%" PRIu64, cnt_in, cnt_out);
 	fprintbytes(wfd, sum_in, format);
 	fprintbytes(wfd, sum_out, format);
 	fprintf(wfd, "\n");
@@ -605,7 +608,7 @@ int chcklink(struct pair *links, uint64_t link_cnt, struct ipaddr addr1 , struct
 	return 0;
 }
 
-/* Main function - program starts here*/
+/* Main function - program starts here */
 int main(int argc, char **argv) {
 	if ( ( argc > 1 )	// show help
 	&& ( ( ( argv[1][0] == '-' ) && ( argv[1][1] == '-' ) && ( argv[1][2] == 'h' ) )
@@ -614,7 +617,7 @@ int main(int argc, char **argv) {
 	char opt;	// command line options
 	char readable_format = ' ', col_head_line = ' ', sort_invert = ' ', sort_cnt = ' ', shorter = 'b';	// switches
 	char *gvalue = NULL, *wvalue = NULL;	// pointer to command line arguments
-	uint debug = 0;	// to count in packets for debug
+	uint64_t debug = 0;	// to count in packets for debug
 	while ((opt = getopt(argc, argv, "Drcinsg:w:")) != -1)	// command line arguments
 		switch (opt) {
 			case 'D': debug = 1; break;	// debug mode
@@ -821,7 +824,7 @@ int main(int argc, char **argv) {
 				fprintaddr(stdout, links[i].addr1);
 				printf("\t");
 				fprintaddr(stdout, links[i].addr2);
-				printf("\t%ju\n", links[i].wght);
+				printf("\t%" PRIu64 "\n", links[i].wght);
 			}
 			struct statset sorted[stats.cnt];	// to store the sorted datasets
 			uint64_t sorted_cnt = 0;
