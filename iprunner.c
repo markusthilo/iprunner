@@ -1,4 +1,4 @@
-/* IPRUNNER v0.4-20201211 */
+/* IPRUNNER v0.4-20201216 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,7 +10,7 @@
 
 /* Print help */
 void help(int r){
-	printf("\nIPPRUNNER v0.3-20201211\n");
+	printf("\nIPPRUNNER v0.3-20201216\n");
 	printf("Written by Markus Thilo\n");
 	printf("GPL-3\n");
 	printf("Runs through PCAP files and statistically analyzes IP packets. Other packets are ignored.\n");
@@ -569,7 +569,6 @@ int chckuniq(struct single *uniq, uint64_t uniq_cnt, struct ipaddr addr, uint64_
 /* Print one line for shorter output */
 void fprintshorter(FILE *wfd, struct sarray *stats, struct ipaddr addr, char format) {
 	fprintaddr(wfd, addr);
-	fprintf(wfd, "\t");
 	uint64_t cnt_in = 0, cnt_out = 0, sum_in = 0, sum_out = 0, first_seen = 0, last_seen = 0;
 	for (uint64_t i=0; i<stats->cnt; i++) {
 		if ( eqaddr(addr, stats->array[i].dst_addr) == 1 ) {
