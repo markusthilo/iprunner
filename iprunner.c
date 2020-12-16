@@ -317,15 +317,14 @@ void fprintbytes(FILE *wfd, uint64_t sum, char format) {
 }
 
 /* Print head line*/
-void fprinthead(FILE *wfd, char set_type) {
-	switch (set_type) {
-		case 'b': fprintf(wfd, "SRC_ADDR\tDST_ADDR"); break;
+void fprinthead(FILE *wfd, char grep_type) {
+	switch (grep_type) {
+		case 'b': fprintf(wfd, "SRC_ADDR\tDST_ADDR\tPROTOCOL"); break;
 		case 's': fprintf(wfd, "ADDR"); break;
 		default: fprintf(wfd, "SRC_ADDR\tSRC_PORT\tDST_ADDR\tDST_PORT\tPROTOCOL");
 	}
-	if (set_type != 's' ) fprintf(wfd, "\tPROTOCOL");
 	fprintf(wfd, "\tFIRST_TS\tLAST_TS");
-	if ( set_type == 's' ) fprintf(wfd, "\tPACKETS_IN\tPACKETS_OUT\tVOLUME_IN\tVOLUME_OUT\n");
+	if ( grep_type == 's' ) fprintf(wfd, "\tPACKETS_IN\tPACKETS_OUT\tVOLUME_IN\tVOLUME_OUT\n");
 	else fprintf(wfd, "\tPACKETS\tVOLUME\n");
 }
 
